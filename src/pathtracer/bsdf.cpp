@@ -144,6 +144,7 @@ void ApproximateBSSRDF::render_debugger_node()
   }
 }
 
+// Uncomment this version for iteration 2
 /**
  * Evaluate Layered BSDF.
  * Blends between base (diffuse) and gloss (specular) contributions based on thickness.
