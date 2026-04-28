@@ -213,8 +213,8 @@ R"(<?xml version="1.0" encoding="utf-8"?>
       <extra>
         <technique profile="CGL">
           <layered>
-            <roughness>0.08</roughness>
-            <thickness>0.6</thickness>
+            <roughness>0.05</roughness>
+            <thickness>0.75</thickness>
             <base_color>0.82 0.22 0.26</base_color>
             <saturation>1.2</saturation>
             <ior>1.5</ior>

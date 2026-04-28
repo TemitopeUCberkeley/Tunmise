@@ -467,57 +467,46 @@ Vector3D DisneyLayeredBSDF::f(const Vector3D wo, const Vector3D wi) {
   Vector3D subsurface_bleed = base_color * 0.8 + Vector3D(0.8, 0.1, 0.1) * 0.2;
   Vector3D flesh_contrib = (subsurface_bleed / PI) * ss_factor * clamp(saturation, 0.0, 1.5);
 
-  // THE WET LAYER (Broad Gloss)
+  // THE GLOSS LAYER (Realistic Lip Gloss)
   
-  double wet_roughness = 0.15; // broad, smooth moisture
-  double alpha2_wet = max(wet_roughness * wet_roughness, 0.001);
+  // Use input roughness directly for realistic gloss control (lower = shinier, more gloss-like)
+  double gloss_roughness = max(roughness * 0.8, 0.02); // scale down to make gloss smoother
+  double alpha2_gloss = max(gloss_roughness * gloss_roughness, 0.0004);
   
-  double water_ior = 1.48; // cosmetic lip gloss IOR
-  double R0_wet = pow((1.0 - water_ior) / (1.0 + water_ior), 2.0);
-  double F_wet = R0_wet + (1.0 - R0_wet) * schlick_weight(cos_theta_d);
+  // Use input IOR for physically accurate reflectance
+  double R0 = pow((1.0 - ior) / (1.0 + ior), 2.0);
+  double F_gloss = R0 + (1.0 - R0) * schlick_weight(cos_theta_d);
 
   double cos_theta_h = max(h.z, 0.0);
   double cos2_theta_h = cos_theta_h * cos_theta_h;
   
-  // GGX Math for broad wet layer
-  double D_denom_wet = PI * pow(cos2_theta_h * (alpha2_wet - 1.0) + 1.0, 2.0);
-  double D_wet = (D_denom_wet > 0.0) ? (alpha2_wet / D_denom_wet) : 0.0;
+  // GGX Normal Distribution for smooth gloss layer
+  double D_denom = PI * pow(cos2_theta_h * (alpha2_gloss - 1.0) + 1.0, 2.0);
+  double D = (D_denom > 0.0) ? (alpha2_gloss / D_denom) : 0.0;
 
   auto G1 = [](double cos_theta, double a2) {
     double cos2_theta = cos_theta * cos_theta;
     return (2.0 * cos_theta) / (cos_theta + sqrt(a2 + (1.0 - a2) * cos2_theta));
   };
-  double G_wet = G1(cos_theta_o, alpha2_wet) * G1(cos_theta_i, alpha2_wet);
+  double G = G1(cos_theta_o, alpha2_gloss) * G1(cos_theta_i, alpha2_gloss);
 
-  double wet_val = (D_wet * F_wet * G_wet) / (4.0 * max(cos_theta_i * cos_theta_o, 0.001));
-
-  // THE SPARKLE LAYER (Micro-glitter flakes)
+  double gloss_val = (D * F_gloss * G) / (4.0 * max(cos_theta_i * cos_theta_o, 0.001));
   
-  double sparkle_roughness = 0.04; // extremely sharp to simulate tiny glitter flakes
-  double alpha2_sparkle = max(sparkle_roughness * sparkle_roughness, 0.0001);
-  
-  // glitter reflects almost all light (acting more like a metal)
-  double F_sparkle = 0.8 + (1.0 - 0.8) * schlick_weight(cos_theta_d); 
-  
-  double D_denom_spk = PI * pow(cos2_theta_h * (alpha2_sparkle - 1.0) + 1.0, 2.0);
-  double D_sparkle = (D_denom_spk > 0.0) ? (alpha2_sparkle / D_denom_spk) : 0.0;
-  double G_sparkle = G1(cos_theta_o, alpha2_sparkle) * G1(cos_theta_i, alpha2_sparkle);
-
-  double sparkle_val = (D_sparkle * F_sparkle * G_sparkle) / (4.0 * max(cos_theta_i * cos_theta_o, 0.001));
-
+  // Clamp specular to prevent fireflies while keeping gloss realistic
+  gloss_val = min(gloss_val, 5.0);
+  Vector3D gloss_contrib(gloss_val, gloss_val, gloss_val);
 
   // ENERGY CONSERVATION & BLEND
   
-  // clamp to a high HDR value (like 50.0) instead of 1.0. 
-  // this allows the center of the highlight to be blindingly bright (sparkly)
-  // without breaking the renderer with literal infinity
-  double combined_specular = min(wet_val + (sparkle_val * 0.5), 20.0);
-  Vector3D wet_contrib(combined_specular, combined_specular, combined_specular);
+  // Blend between flesh (diffuse) and gloss (specular) layers
+  // The gloss layer tints slightly with the base color for realism
+  Vector3D gloss_tinted = gloss_contrib + (base_color * 0.15) * gloss_val;
+  
+  // Blend: flesh layer is dimmed where gloss reflects, but not as aggressively
+  // This preserves more of the red/pink undertone even with high thickness
+  Vector3D final_flesh = flesh_contrib * (1.0 - F_gloss * 0.6);
 
-  // subtract the broad Fresnel from the flesh so energy is conserved
-  Vector3D final_flesh = flesh_contrib * (1.0 - F_wet);
-
-  return final_flesh * (1.0 - thickness) + (final_flesh + wet_contrib) * thickness;
+  return final_flesh * (1.0 - thickness) + gloss_tinted * thickness;
 
   /*
   // THE WET LAYER (GGX Clearcoat for Saliva/Gloss)
@@ -563,13 +552,13 @@ Vector3D DisneyLayeredBSDF::sample_f(const Vector3D wo, Vector3D* wi, double* pd
   // if the ray is coming from inside the geometry, catch it early
   if (wo.z <= 0.0) return Vector3D(0, 0, 0);
 
-  /* double random_sample = random_uniform();
+  double random_sample = random_uniform();
   
-  // lock the wet roughness to match what we hardcoded in the f() function
-  double wet_roughness = 0.15; 
+  // Use the same roughness scaling as in f()
+  double gloss_roughness = max(roughness * 0.8, 0.02);
 
   if (random_sample < thickness) {
-    // SAMPLE THE WET LAYER (Specular)
+    // SAMPLE THE GLOSS LAYER (Specular)
     
     // find perfect mirror reflection direction
     Vector3D reflected_dir;
@@ -579,13 +568,13 @@ Vector3D DisneyLayeredBSDF::sample_f(const Vector3D wo, Vector3D* wi, double* pd
     double perturb_pdf;
     Vector3D perturbation = sampler.get_sample(&perturb_pdf);
     
-    // blend perfect reflection with the perturbation based on our wet roughness
-    // this creates a tight specular lobe perfect for saliva/gloss
-    *wi = (reflected_dir * (1.0 - wet_roughness) + perturbation * wet_roughness);
+    // blend perfect reflection with the perturbation based on gloss roughness
+    // smoother gloss means the specular lobe is tighter
+    *wi = (reflected_dir * (1.0 - gloss_roughness) + perturbation * gloss_roughness);
     wi->normalize();
     
     // calculate the probability density of picking this exact direction
-    *pdf = thickness * (perturb_pdf * wet_roughness + (1.0 - wet_roughness) * 0.25);
+    *pdf = thickness * (perturb_pdf * gloss_roughness + (1.0 - gloss_roughness) * 0.25);
     
   } else {
     // SAMPLE THE FLESH LAYER (Diffuse/Subsurface)
@@ -598,8 +587,6 @@ Vector3D DisneyLayeredBSDF::sample_f(const Vector3D wo, Vector3D* wi, double* pd
     // the probability is scaled by the chance we picked the flesh layer
     *pdf = (1.0 - thickness) * base_pdf;
   }
-  */
-  *wi = sampler.get_sample(pdf);
 
   // EVALUATE AND RETURN
   
@@ -613,9 +600,10 @@ Vector3D DisneyLayeredBSDF::sample_f(const Vector3D wo, Vector3D* wi, double* pd
     
     // anti-firefly clamping: prevents single rays from exploding in brightness 
     // if they hit a weird microfacet angle with a tiny PDF
-    result.x = min(result.x, 10.0);
-    result.y = min(result.y, 10.0);
-    result.z = min(result.z, 10.0);
+    // More conservative now with lower specular cap
+    result.x = min(result.x, 8.0);
+    result.y = min(result.y, 8.0);
+    result.z = min(result.z, 8.0);
     
     return result;
   } else {
