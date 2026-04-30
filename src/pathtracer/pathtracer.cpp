@@ -119,19 +119,18 @@ PathTracer::estimate_direct_lighting_importance(const Ray &r,
       double distance_to_light_source;
       double sampling_probability;
       Vector3D light_radiance = current_light->sample_L(hit_p, &incident_light_direction, &distance_to_light_source, &sampling_probability);
-      
-      Vector3D bsdf_value = isect.bsdf->f(w_out, w2o * incident_light_direction);
+
+      double cosine_term = dot(incident_light_direction, isect.n);
+      if (cosine_term < 0) continue; // Skip this sample
       
       Ray visibility_ray = Ray(hit_p, incident_light_direction);
       visibility_ray.min_t = EPS_F;
       visibility_ray.max_t = distance_to_light_source - EPS_F;
       
-      Intersection occluding_intersection;
-      bool light_is_visible = !bvh->intersect(visibility_ray, &occluding_intersection);
+      bool light_is_visible = !bvh->has_intersection(visibility_ray);
       
       if (light_is_visible) {
-        double cosine_term = dot(incident_light_direction, isect.n);
-        if (cosine_term < 0) continue; // Skip this sample
+        Vector3D bsdf_value = isect.bsdf->f(w_out, w2o * incident_light_direction);
         double contribution_weight = is_point_light ? ns_area_light : 1.0;
         L_out += contribution_weight * bsdf_value * light_radiance * cosine_term / sampling_probability;
       }

@@ -290,11 +290,8 @@ Vector3D LayeredBSDF::sample_f(const Vector3D wo, Vector3D* wi, double* pdf) {
   // Evaluate BSDF at sampled direction
   Vector3D result = f(wo, *wi);
   
-  // Importance sampling: return result / pdf
-  // Clamp the final result to prevent fireflies
+  // Return the BSDF value. The path integrator applies the 1 / pdf factor.
   if (*pdf > 1e-10) {
-    result = result / *pdf;
-    // Clamp each channel to prevent extreme values
     result.x = min(result.x, 10.0);
     result.y = min(result.y, 10.0);
     result.z = min(result.z, 10.0);
@@ -406,9 +403,8 @@ Vector3D FastLayeredBSDF::sample_f(const Vector3D wo, Vector3D* wi, double* pdf)
   // evaluate BSDF at sampled direction
   Vector3D result = f(wo, *wi);
   
-  // importance sampling: return result / pdf
+  // Return the BSDF value. The path integrator applies the 1 / pdf factor.
   if (*pdf > 1e-10) {
-    result = result / *pdf;
     result.x = min(result.x, 10.0);
     result.y = min(result.y, 10.0);
     result.z = min(result.z, 10.0);
@@ -550,7 +546,10 @@ Vector3D DisneyLayeredBSDF::f(const Vector3D wo, const Vector3D wi) {
 
 Vector3D DisneyLayeredBSDF::sample_f(const Vector3D wo, Vector3D* wi, double* pdf) {
   // if the ray is coming from inside the geometry, catch it early
-  if (wo.z <= 0.0) return Vector3D(0, 0, 0);
+  if (wo.z <= 0.0) {
+    *pdf = 0.0;
+    return Vector3D(0, 0, 0);
+  }
 
   double random_sample = random_uniform();
   
@@ -594,13 +593,8 @@ Vector3D DisneyLayeredBSDF::sample_f(const Vector3D wo, Vector3D* wi, double* pd
   // (which calculates BOTH layers) at this specific angle
   Vector3D result = f(wo, *wi);
   
-  // importance sampling: divide the result by the probability of taking this path
+  // Return the BSDF value. The path integrator applies the 1 / pdf factor.
   if (*pdf > 1e-10) {
-    result = result / *pdf;
-    
-    // anti-firefly clamping: prevents single rays from exploding in brightness 
-    // if they hit a weird microfacet angle with a tiny PDF
-    // More conservative now with lower specular cap
     result.x = min(result.x, 8.0);
     result.y = min(result.y, 8.0);
     result.z = min(result.z, 8.0);

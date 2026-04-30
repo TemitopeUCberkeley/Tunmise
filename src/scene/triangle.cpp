@@ -10,6 +10,8 @@ Triangle::Triangle(const Mesh *mesh, size_t v1, size_t v2, size_t v3) {
   p1 = mesh->positions[v1];
   p2 = mesh->positions[v2];
   p3 = mesh->positions[v3];
+  e1 = p2 - p1;
+  e2 = p3 - p1;
   n1 = mesh->normals[v1];
   n2 = mesh->normals[v2];
   n3 = mesh->normals[v3];
@@ -28,17 +30,15 @@ bool Triangle::has_intersection(const Ray &r) const {
   // function records the "intersection" while this function only tests whether
   // there is a intersection.
   
-  const Vector3D E1 = p2 - p1;
-  const Vector3D E2 = p3 - p1;
   const Vector3D S = r.o - p1;
-  const Vector3D S1 = cross(r.d, E2);
-  const Vector3D S2 = cross(S, E1);
-  const double denom = dot(E1, S1);
+  const Vector3D S1 = cross(r.d, e2);
+  const Vector3D S2 = cross(S, e1);
+  const double denom = dot(e1, S1);
   if (fabs(denom) < EPS_D) return false;
 
   const double b_1_num = dot(S, S1);
   const double b_2_num = dot(r.d, S2);
-  const double t_num = dot(E2, S2);
+  const double t_num = dot(e2, S2);
   const double edge_eps = EPS_D * fabs(denom);
 
   if (denom > 0.0) {
@@ -60,12 +60,10 @@ bool Triangle::intersect(const Ray &r, Intersection *isect) const {
   // implement ray-triangle intersection. When an intersection takes
   // place, the Intersection data should be updated accordingly
   
-  const Vector3D E1 = p2 - p1;
-  const Vector3D E2 = p3 - p1;
   const Vector3D S = r.o - p1;
-  const Vector3D S1 = cross(r.d, E2);
-  const Vector3D S2 = cross(S, E1);
-  const double denom = dot(E1, S1);
+  const Vector3D S1 = cross(r.d, e2);
+  const Vector3D S2 = cross(S, e1);
+  const double denom = dot(e1, S1);
   if (fabs(denom) < EPS_D) return false;
 
   // switched to using doubles because I thought that was causing the precision error
@@ -73,7 +71,7 @@ bool Triangle::intersect(const Ray &r, Intersection *isect) const {
   // but performance seems fine with doubles so I figure we keep them
   const double b_1_num = dot(S, S1);
   const double b_2_num = dot(r.d, S2);
-  const double t_num = dot(E2, S2);
+  const double t_num = dot(e2, S2);
   const double edge_eps = EPS_D * fabs(denom);
 
   // weird artifacts showed up on bigger .dae files with small/dense triangle mesheswhen I divided by denom before comparisons
