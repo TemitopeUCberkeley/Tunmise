@@ -4,8 +4,117 @@
 #include "imgui_impl_glfw.h"
 #include "imgui_impl_opengl2.h"
 #include "imgui_internal.h"
+#include "pathtracer/bsdf.h"
+#include "scene/collada/collada.h"
+#include "scene/collada/material_info.h"
+#include "scene/collada/polymesh_info.h"
+#include "scene/collada/sphere_info.h"
+
 #include <fstream>
 #include <limits>
+#include <set>
+#include <vector>
+
+namespace {
+
+using CGL::BSDFPreset;
+using CGL::Collada::Instance;
+using CGL::Collada::MaterialInfo;
+using CGL::Collada::PolymeshInfo;
+using CGL::Collada::SceneInfo;
+using CGL::Collada::SphereInfo;
+
+std::vector<BSDFPreset> material_presets;
+std::string material_preset_scene_path;
+
+std::string material_key(const MaterialInfo* material) {
+  if (!material) return "";
+  if (!material->id.empty()) return material->id;
+  return material->name;
+}
+
+void destroy_scene_info(SceneInfo* scene_info) {
+  if (!scene_info) return;
+
+  for (size_t i = 0; i < scene_info->nodes.size(); i++) {
+    Instance* instance = scene_info->nodes[i].instance;
+    if (!instance) continue;
+
+    switch (instance->type) {
+      case Instance::POLYMESH: {
+        PolymeshInfo* polymesh = static_cast<PolymeshInfo*>(instance);
+        if (polymesh->material) {
+          delete polymesh->material->bsdf;
+          delete polymesh->material;
+        }
+        delete polymesh;
+        break;
+      }
+      case Instance::SPHERE: {
+        SphereInfo* sphere = static_cast<SphereInfo*>(instance);
+        if (sphere->material) {
+          delete sphere->material->bsdf;
+          delete sphere->material;
+        }
+        delete sphere;
+        break;
+      }
+      case Instance::CAMERA:
+      case Instance::LIGHT:
+      case Instance::MATERIAL:
+        delete instance;
+        break;
+    }
+  }
+
+  delete scene_info;
+}
+
+void load_material_presets_for_scene(const std::string& scene_path) {
+  material_presets.clear();
+  material_preset_scene_path.clear();
+
+  if (!PathtracerLauncherGUI::dae_exists(scene_path)) {
+    return;
+  }
+
+  SceneInfo* scene_info = new SceneInfo();
+  if (CGL::Collada::ColladaParser::load(scene_path.c_str(), scene_info) < 0) {
+    destroy_scene_info(scene_info);
+    return;
+  }
+
+  std::set<std::string> seen_keys;
+
+  for (size_t i = 0; i < scene_info->nodes.size(); i++) {
+    MaterialInfo* material = NULL;
+    Instance* instance = scene_info->nodes[i].instance;
+    if (!instance) continue;
+
+    if (instance->type == Instance::POLYMESH) {
+      material = static_cast<PolymeshInfo*>(instance)->material;
+    } else if (instance->type == Instance::SPHERE) {
+      material = static_cast<SphereInfo*>(instance)->material;
+    }
+
+    if (!material || !material->bsdf) continue;
+
+    std::string key = material_key(material);
+    if (seen_keys.find(key) != seen_keys.end()) continue;
+
+    BSDFPreset preset = material->bsdf->get_preset();
+    preset.material_id = material->id;
+    preset.material_name = material->name;
+    material_presets.push_back(preset);
+    seen_keys.insert(key);
+  }
+
+  material_preset_scene_path = scene_path;
+  destroy_scene_info(scene_info);
+}
+
+}
+
 namespace Utils {
 bool is_selecting = false;
 
@@ -125,6 +234,15 @@ void PathtracerLauncherGUI::render_loop(GLFWwindow *a_window,
     ImGui::NewFrame();
     int display_w, display_h;
     glfwGetWindowSize(a_window, &display_w, &display_h);
+    bool scene_file_exists = dae_exists(a_settings.scene_file_path);
+
+    if (scene_file_exists &&
+        material_preset_scene_path != a_settings.scene_file_path) {
+      load_material_presets_for_scene(a_settings.scene_file_path);
+    } else if (!scene_file_exists && !material_preset_scene_path.empty()) {
+      material_presets.clear();
+      material_preset_scene_path.clear();
+    }
 
     // Set the next window position to cover the entire GLFW window
     ImGui::SetNextWindowPos(ImVec2(0, 0));
@@ -182,7 +300,6 @@ void PathtracerLauncherGUI::render_loop(GLFWwindow *a_window,
           reinterpret_cast<int *>(&a_settings.pathtracer_samples_per_patch));
     }
     const int char_buf_size = 64;
-    static bool scene_file_exists = dae_exists(a_settings.scene_file_path);
     {
       ImGui::Separator();
       Utils::title_text("Camera Settings");
@@ -244,6 +361,12 @@ void PathtracerLauncherGUI::render_loop(GLFWwindow *a_window,
       if (ImGui::InputText("Scene File", file_name_buf, char_buf_size)) {
         a_settings.scene_file_path = file_name_buf;
         scene_file_exists = dae_exists(a_settings.scene_file_path);
+        if (scene_file_exists) {
+          load_material_presets_for_scene(a_settings.scene_file_path);
+        } else {
+          material_presets.clear();
+          material_preset_scene_path.clear();
+        }
       }
       Utils::HoverNote("Relative path of the .dae scene file.\n Example: ../dae/sky/CBbunny.dae\nNote that pathing may be different on your system.");
 
@@ -277,6 +400,37 @@ void PathtracerLauncherGUI::render_loop(GLFWwindow *a_window,
         ImGui::Text("%s already exists, will be overwritten.",
                     a_settings.output_file_name.c_str());
         ImGui::PopStyleColor();
+      }
+    }
+
+    {
+      ImGui::Separator();
+      Utils::title_text("Materials");
+      if (!scene_file_exists) {
+        ImGui::TextDisabled("Select a valid .dae scene file to edit BSDF parameters.");
+      } else if (material_presets.empty()) {
+        ImGui::TextDisabled("No editable materials found in the selected scene.");
+      } else {
+        ImGui::TextWrapped("Material edits here will be applied when the scene launches.");
+        for (size_t i = 0; i < material_presets.size(); i++) {
+          BSDFPreset& preset = material_presets[i];
+          std::string header;
+          if (!preset.material_name.empty() && !preset.material_id.empty()) {
+            header = preset.material_name + " (" + preset.material_id + ")";
+          } else if (!preset.material_name.empty()) {
+            header = preset.material_name;
+          } else if (!preset.material_id.empty()) {
+            header = preset.material_id;
+          } else {
+            header = "Material";
+          }
+          ImGui::PushID(static_cast<int>(i));
+          if (ImGui::TreeNode(header.c_str())) {
+            CGL::render_bsdf_preset_controls(preset);
+            ImGui::TreePop();
+          }
+          ImGui::PopID();
+        }
       }
     }
 
@@ -396,6 +550,45 @@ int PathtracerLauncherGUI::draw(GUISettings &a_settings) {
 
   return 0;
 }
+
+void PathtracerLauncherGUI::apply_material_overrides(
+    CGL::Collada::SceneInfo *scene_info) {
+  if (!scene_info || material_presets.empty()) return;
+
+  for (size_t i = 0; i < scene_info->nodes.size(); i++) {
+    CGL::Collada::MaterialInfo* material = NULL;
+    CGL::Collada::Instance* instance = scene_info->nodes[i].instance;
+    if (!instance) continue;
+
+    if (instance->type == CGL::Collada::Instance::POLYMESH) {
+      material = static_cast<CGL::Collada::PolymeshInfo*>(instance)->material;
+    } else if (instance->type == CGL::Collada::Instance::SPHERE) {
+      material = static_cast<CGL::Collada::SphereInfo*>(instance)->material;
+    }
+
+    if (!material || !material->bsdf) continue;
+
+    std::string key = material_key(material);
+    for (size_t j = 0; j < material_presets.size(); j++) {
+      const BSDFPreset& preset = material_presets[j];
+      std::string preset_key =
+          !preset.material_id.empty() ? preset.material_id : preset.material_name;
+      if (key == preset_key) {
+        if (material->bsdf->get_preset().type == preset.type) {
+          material->bsdf->apply_preset(preset);
+        } else {
+          CGL::BSDF* replacement = CGL::create_bsdf_from_preset(preset);
+          if (replacement) {
+            delete material->bsdf;
+            material->bsdf = replacement;
+          }
+        }
+        break;
+      }
+    }
+  }
+}
+
 bool PathtracerLauncherGUI::file_exists(const std::string &name) {
   struct stat buffer;
   return (stat(name.c_str(), &buffer) == 0);

@@ -16,6 +16,7 @@ namespace CGL { namespace Collada {
 */
 class Instance {
  public:
+  virtual ~Instance() {}
   /*
     There are a variety of different types of objects
     that can appear in a scene (lights, cameras, etc.);

@@ -64,6 +64,9 @@ class Mesh : public SceneObject, public MeshView {
   MeshView *get_mesh_view();
 
   BSDF *get_bsdf();
+  void set_bsdf(BSDF* bsdf);
+  std::string get_material_key() const;
+  std::string get_material_label() const;
   SceneObjects::SceneObject *get_static_object();
 
   // MeshView methods
@@ -115,6 +118,8 @@ class Mesh : public SceneObject, public MeshView {
 
   // material
   BSDF* bsdf;
+  std::string material_key;
+  std::string material_label;
 };
 
 } // namespace GLScene

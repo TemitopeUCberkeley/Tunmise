@@ -7,8 +7,8 @@
 namespace CGL { namespace Collada {
 
 struct SphereInfo : Instance {
-  float radius;						 ///< radius
-  MaterialInfo* material;  ///< material of the sphere
+  float radius = 0.0f;              ///< radius
+  MaterialInfo* material = nullptr; ///< material of the sphere
 }; // struct Sphere
 
 std::ostream& operator<<(std::ostream& os, const SphereInfo& sphere);

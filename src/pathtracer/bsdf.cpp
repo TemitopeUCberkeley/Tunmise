@@ -1,6 +1,4 @@
 #include "bsdf.h"
-#include "bsdf.h"
-#include "bsdf.h"
 
 #include "application/visual_debugger.h"
 
@@ -14,6 +12,244 @@ using std::min;
 using std::swap;
 
 namespace CGL {
+
+namespace {
+
+const BSDFPresetType kEditableBSDFPresetTypes[] = {
+    BSDF_PRESET_DIFFUSE,
+    BSDF_PRESET_MICROFACET,
+    BSDF_PRESET_MIRROR,
+    BSDF_PRESET_REFRACTION,
+    BSDF_PRESET_GLASS,
+    BSDF_PRESET_EMISSION,
+    BSDF_PRESET_APPROXIMATE_BSSRDF,
+    BSDF_PRESET_LAYERED,
+    BSDF_PRESET_FAST_LAYERED,
+    BSDF_PRESET_DISNEY_LAYERED,
+};
+
+void sync_base_layer(ApproximateBSSRDF*& base_layer, const Vector3D& base_color,
+                     double roughness) {
+  delete base_layer;
+  base_layer = new ApproximateBSSRDF(base_color, roughness);
+}
+
+bool is_zero_vector(const Vector3D& value) {
+  return value.x == 0.0 && value.y == 0.0 && value.z == 0.0;
+}
+
+Vector3D default_surface_color() {
+  return Vector3D(0.8, 0.8, 0.8);
+}
+
+Vector3D infer_surface_color(const BSDFPreset& preset) {
+  switch (preset.type) {
+    case BSDF_PRESET_DIFFUSE:
+    case BSDF_PRESET_MIRROR:
+    case BSDF_PRESET_EMISSION:
+    case BSDF_PRESET_APPROXIMATE_BSSRDF:
+    case BSDF_PRESET_LAYERED:
+    case BSDF_PRESET_FAST_LAYERED:
+    case BSDF_PRESET_DISNEY_LAYERED:
+    case BSDF_PRESET_REFRACTION:
+      return preset.vector_a;
+    case BSDF_PRESET_GLASS:
+      return !is_zero_vector(preset.vector_b) ? preset.vector_b : preset.vector_a;
+    case BSDF_PRESET_MICROFACET:
+      return default_surface_color();
+    default:
+      return default_surface_color();
+  }
+}
+
+Vector3D infer_subsurface_color(const BSDFPreset& preset) {
+  if ((preset.type == BSDF_PRESET_LAYERED ||
+       preset.type == BSDF_PRESET_FAST_LAYERED ||
+       preset.type == BSDF_PRESET_DISNEY_LAYERED) &&
+      !is_zero_vector(preset.vector_b)) {
+    return preset.vector_b;
+  }
+  if (preset.type == BSDF_PRESET_APPROXIMATE_BSSRDF) {
+    return preset.vector_a;
+  }
+  return infer_surface_color(preset);
+}
+
+double infer_roughness(const BSDFPreset& preset) {
+  switch (preset.type) {
+    case BSDF_PRESET_MICROFACET:
+    case BSDF_PRESET_REFRACTION:
+    case BSDF_PRESET_GLASS:
+    case BSDF_PRESET_APPROXIMATE_BSSRDF:
+    case BSDF_PRESET_LAYERED:
+    case BSDF_PRESET_FAST_LAYERED:
+    case BSDF_PRESET_DISNEY_LAYERED:
+      return preset.scalar_a;
+    default:
+      return 0.2;
+  }
+}
+
+double infer_subsurface_roughness(const BSDFPreset& preset) {
+  if (preset.type == BSDF_PRESET_LAYERED ||
+      preset.type == BSDF_PRESET_FAST_LAYERED ||
+      preset.type == BSDF_PRESET_DISNEY_LAYERED) {
+    return preset.scalar_e;
+  }
+  return infer_roughness(preset);
+}
+
+double infer_ior(const BSDFPreset& preset) {
+  switch (preset.type) {
+    case BSDF_PRESET_REFRACTION:
+    case BSDF_PRESET_GLASS:
+      return preset.scalar_b;
+    case BSDF_PRESET_LAYERED:
+    case BSDF_PRESET_FAST_LAYERED:
+    case BSDF_PRESET_DISNEY_LAYERED:
+      return preset.scalar_d;
+    default:
+      return 1.5;
+  }
+}
+
+double infer_thickness(const BSDFPreset& preset) {
+  switch (preset.type) {
+    case BSDF_PRESET_LAYERED:
+    case BSDF_PRESET_FAST_LAYERED:
+    case BSDF_PRESET_DISNEY_LAYERED:
+      return preset.scalar_b;
+    default:
+      return 0.5;
+  }
+}
+
+double infer_saturation(const BSDFPreset& preset) {
+  switch (preset.type) {
+    case BSDF_PRESET_LAYERED:
+    case BSDF_PRESET_FAST_LAYERED:
+    case BSDF_PRESET_DISNEY_LAYERED:
+      return preset.scalar_c;
+    default:
+      return 1.0;
+  }
+}
+
+BSDFPreset make_default_bsdf_preset(BSDFPresetType type) {
+  BSDFPreset preset;
+  preset.type = type;
+
+  switch (type) {
+    case BSDF_PRESET_DIFFUSE:
+    case BSDF_PRESET_MIRROR:
+      preset.vector_a = default_surface_color();
+      break;
+    case BSDF_PRESET_MICROFACET:
+      preset.vector_a = Vector3D(1.5, 1.5, 1.5);
+      preset.vector_b = Vector3D(1.0, 1.0, 1.0);
+      preset.scalar_a = 0.2;
+      break;
+    case BSDF_PRESET_REFRACTION:
+      preset.vector_a = Vector3D(0.95, 0.95, 0.95);
+      preset.scalar_a = 0.0;
+      preset.scalar_b = 1.5;
+      break;
+    case BSDF_PRESET_GLASS:
+      preset.vector_a = Vector3D(0.95, 0.95, 0.95);
+      preset.vector_b = default_surface_color();
+      preset.scalar_a = 0.0;
+      preset.scalar_b = 1.5;
+      break;
+    case BSDF_PRESET_EMISSION:
+      preset.vector_a = Vector3D(1.0, 1.0, 1.0);
+      break;
+    case BSDF_PRESET_APPROXIMATE_BSSRDF:
+      preset.vector_a = Vector3D(0.8, 0.6, 0.6);
+      preset.scalar_a = 0.3;
+      break;
+    case BSDF_PRESET_LAYERED:
+    case BSDF_PRESET_FAST_LAYERED:
+    case BSDF_PRESET_DISNEY_LAYERED:
+      preset.vector_a = Vector3D(0.8, 0.2, 0.2);
+      preset.vector_b = preset.vector_a;
+      preset.scalar_a = 0.15;
+      preset.scalar_b = 0.5;
+      preset.scalar_c = 1.0;
+      preset.scalar_d = 1.5;
+      preset.scalar_e = 0.3;
+      break;
+    default:
+      break;
+  }
+
+  return preset;
+}
+
+BSDFPreset convert_bsdf_preset_type(const BSDFPreset& source,
+                                    BSDFPresetType target_type) {
+  BSDFPreset converted = make_default_bsdf_preset(target_type);
+  converted.material_id = source.material_id;
+  converted.material_name = source.material_name;
+
+  Vector3D surface_color = infer_surface_color(source);
+  Vector3D subsurface_color = infer_subsurface_color(source);
+  double roughness = infer_roughness(source);
+  double subsurface_roughness = infer_subsurface_roughness(source);
+  double ior = infer_ior(source);
+  double thickness = infer_thickness(source);
+  double saturation = infer_saturation(source);
+
+  switch (target_type) {
+    case BSDF_PRESET_DIFFUSE:
+    case BSDF_PRESET_MIRROR:
+    case BSDF_PRESET_EMISSION:
+      converted.vector_a = surface_color;
+      break;
+    case BSDF_PRESET_MICROFACET:
+      converted.scalar_a = roughness;
+      break;
+    case BSDF_PRESET_REFRACTION:
+      converted.vector_a = surface_color;
+      converted.scalar_a = roughness;
+      converted.scalar_b = ior;
+      break;
+    case BSDF_PRESET_GLASS:
+      converted.vector_a = surface_color;
+      converted.vector_b = surface_color;
+      converted.scalar_a = roughness;
+      converted.scalar_b = ior;
+      break;
+    case BSDF_PRESET_APPROXIMATE_BSSRDF:
+      converted.vector_a = subsurface_color;
+      converted.scalar_a = subsurface_roughness;
+      break;
+    case BSDF_PRESET_LAYERED:
+    case BSDF_PRESET_FAST_LAYERED:
+    case BSDF_PRESET_DISNEY_LAYERED:
+      converted.vector_a = surface_color;
+      converted.vector_b = subsurface_color;
+      converted.scalar_a = roughness;
+      converted.scalar_b = thickness;
+      converted.scalar_c = saturation;
+      converted.scalar_d = ior;
+      converted.scalar_e = subsurface_roughness;
+      break;
+    default:
+      break;
+  }
+
+  return converted;
+}
+
+int editable_bsdf_preset_type_index(BSDFPresetType type) {
+  const int count = sizeof(kEditableBSDFPresetTypes) / sizeof(kEditableBSDFPresetTypes[0]);
+  for (int i = 0; i < count; i++) {
+    if (kEditableBSDFPresetTypes[i] == type) return i;
+  }
+  return 0;
+}
+
+} // namespace
 
 /**
  * This function creates a object space (basis vectors) from the normal vector
@@ -38,6 +274,145 @@ void make_coord_space(Matrix3x3 &o2w, const Vector3D n) {
   o2w[0] = x;
   o2w[1] = y;
   o2w[2] = z;
+}
+
+BSDFPreset BSDF::get_preset() const {
+  return BSDFPreset();
+}
+
+void BSDF::apply_preset(const BSDFPreset& preset) {
+}
+
+const char* bsdf_preset_type_name(BSDFPresetType type) {
+  switch (type) {
+    case BSDF_PRESET_DIFFUSE: return "Diffuse";
+    case BSDF_PRESET_MICROFACET: return "Microfacet";
+    case BSDF_PRESET_MIRROR: return "Mirror";
+    case BSDF_PRESET_REFRACTION: return "Refraction";
+    case BSDF_PRESET_GLASS: return "Glass";
+    case BSDF_PRESET_EMISSION: return "Emission";
+    case BSDF_PRESET_APPROXIMATE_BSSRDF: return "Approximate BSSRDF";
+    case BSDF_PRESET_LAYERED: return "Layered";
+    case BSDF_PRESET_FAST_LAYERED: return "Fast Layered";
+    case BSDF_PRESET_DISNEY_LAYERED: return "Disney Layered";
+    default: return "Unsupported";
+  }
+}
+
+bool render_bsdf_preset_controls(BSDFPreset& preset) {
+  bool changed = false;
+
+  int current_type_index = editable_bsdf_preset_type_index(preset.type);
+  if (ImGui::BeginCombo("Material Type",
+                        bsdf_preset_type_name(kEditableBSDFPresetTypes[current_type_index]))) {
+    const int count = sizeof(kEditableBSDFPresetTypes) / sizeof(kEditableBSDFPresetTypes[0]);
+    for (int i = 0; i < count; i++) {
+      const BSDFPresetType type = kEditableBSDFPresetTypes[i];
+      const bool selected = type == preset.type;
+      if (ImGui::Selectable(bsdf_preset_type_name(type), selected)) {
+        if (type != preset.type) {
+          preset = convert_bsdf_preset_type(preset, type);
+          changed = true;
+        }
+      }
+      if (selected) {
+        ImGui::SetItemDefaultFocus();
+      }
+    }
+    ImGui::EndCombo();
+  }
+
+  switch (preset.type) {
+    case BSDF_PRESET_DIFFUSE:
+    case BSDF_PRESET_MIRROR:
+      changed |= DragDouble3("Reflectance", &preset.vector_a[0], 0.005f);
+      break;
+    case BSDF_PRESET_EMISSION:
+      changed |= DragDouble3("Radiance", &preset.vector_a[0], 0.005f);
+      break;
+    case BSDF_PRESET_MICROFACET:
+      changed |= DragDouble3("Eta", &preset.vector_a[0], 0.005f);
+      changed |= DragDouble3("K", &preset.vector_b[0], 0.005f);
+      changed |= DragDouble("Alpha", &preset.scalar_a, 0.005f);
+      break;
+    case BSDF_PRESET_REFRACTION:
+      changed |= DragDouble3("Transmittance", &preset.vector_a[0], 0.005f);
+      changed |= DragDouble("Roughness", &preset.scalar_a, 0.005f);
+      changed |= DragDouble("IOR", &preset.scalar_b, 0.005f);
+      break;
+    case BSDF_PRESET_GLASS:
+      changed |= DragDouble3("Transmittance", &preset.vector_a[0], 0.005f);
+      changed |= DragDouble3("Reflectance", &preset.vector_b[0], 0.005f);
+      changed |= DragDouble("Roughness", &preset.scalar_a, 0.005f);
+      changed |= DragDouble("IOR", &preset.scalar_b, 0.005f);
+      break;
+    case BSDF_PRESET_APPROXIMATE_BSSRDF:
+      changed |= DragDouble3("Skin Color", &preset.vector_a[0], 0.005f);
+      changed |= DragDouble("Roughness", &preset.scalar_a, 0.005f);
+      break;
+    case BSDF_PRESET_LAYERED:
+    case BSDF_PRESET_FAST_LAYERED:
+    case BSDF_PRESET_DISNEY_LAYERED:
+      ImGui::Text("Layer Controls");
+      changed |= DragDouble("Gloss Roughness", &preset.scalar_a, 0.005f);
+      changed |= DragDouble("Thickness", &preset.scalar_b, 0.005f);
+      changed |= DragDouble3("Base Color", &preset.vector_a[0], 0.005f);
+      changed |= DragDouble("Saturation", &preset.scalar_c, 0.005f);
+      changed |= DragDouble("IOR", &preset.scalar_d, 0.005f);
+      ImGui::Spacing();
+      ImGui::Text("Base BSSRDF Controls");
+      changed |= DragDouble3("Skin Color", &preset.vector_b[0], 0.005f);
+      changed |= DragDouble("Base Roughness", &preset.scalar_e, 0.005f);
+      break;
+    default:
+      ImGui::TextDisabled("This BSDF type is not editable here.");
+      break;
+  }
+
+  return changed;
+}
+
+BSDF* create_bsdf_from_preset(const BSDFPreset& preset) {
+  switch (preset.type) {
+    case BSDF_PRESET_DIFFUSE:
+      return new DiffuseBSDF(preset.vector_a);
+    case BSDF_PRESET_MICROFACET:
+      return new MicrofacetBSDF(preset.vector_a, preset.vector_b, preset.scalar_a);
+    case BSDF_PRESET_MIRROR:
+      return new MirrorBSDF(preset.vector_a);
+    case BSDF_PRESET_REFRACTION:
+      return new RefractionBSDF(preset.vector_a, preset.scalar_a, preset.scalar_b);
+    case BSDF_PRESET_GLASS:
+      return new GlassBSDF(preset.vector_a, preset.vector_b, preset.scalar_a,
+                           preset.scalar_b);
+    case BSDF_PRESET_EMISSION:
+      return new EmissionBSDF(preset.vector_a);
+    case BSDF_PRESET_APPROXIMATE_BSSRDF:
+      return new ApproximateBSSRDF(preset.vector_a, preset.scalar_a);
+    case BSDF_PRESET_LAYERED: {
+      LayeredBSDF* bsdf = new LayeredBSDF(preset.scalar_a, preset.scalar_b,
+                                          preset.vector_a, preset.scalar_c,
+                                          preset.scalar_d);
+      bsdf->apply_preset(preset);
+      return bsdf;
+    }
+    case BSDF_PRESET_FAST_LAYERED: {
+      FastLayeredBSDF* bsdf = new FastLayeredBSDF(preset.scalar_a, preset.scalar_b,
+                                                  preset.vector_a, preset.scalar_c,
+                                                  preset.scalar_d);
+      bsdf->apply_preset(preset);
+      return bsdf;
+    }
+    case BSDF_PRESET_DISNEY_LAYERED: {
+      DisneyLayeredBSDF* bsdf =
+          new DisneyLayeredBSDF(preset.scalar_a, preset.scalar_b, preset.vector_a,
+                                preset.scalar_c, preset.scalar_d);
+      bsdf->apply_preset(preset);
+      return bsdf;
+    }
+    default:
+      return nullptr;
+  }
 }
 
 /**
@@ -83,6 +458,18 @@ void DiffuseBSDF::render_debugger_node()
   }
 }
 
+BSDFPreset DiffuseBSDF::get_preset() const {
+  BSDFPreset preset;
+  preset.type = BSDF_PRESET_DIFFUSE;
+  preset.vector_a = reflectance;
+  return preset;
+}
+
+void DiffuseBSDF::apply_preset(const BSDFPreset& preset) {
+  if (preset.type != BSDF_PRESET_DIFFUSE) return;
+  reflectance = preset.vector_a;
+}
+
 /**
  * Evalutate Emission BSDF (Light Source)
  */
@@ -106,6 +493,18 @@ void EmissionBSDF::render_debugger_node()
     DragDouble3("Radiance", &radiance[0], 0.005);
     ImGui::TreePop();
   }
+}
+
+BSDFPreset EmissionBSDF::get_preset() const {
+  BSDFPreset preset;
+  preset.type = BSDF_PRESET_EMISSION;
+  preset.vector_a = radiance;
+  return preset;
+}
+
+void EmissionBSDF::apply_preset(const BSDFPreset& preset) {
+  if (preset.type != BSDF_PRESET_EMISSION) return;
+  radiance = preset.vector_a;
 }
 
 /**
@@ -142,6 +541,20 @@ void ApproximateBSSRDF::render_debugger_node()
     DragDouble("Roughness", &roughness, 0.005);
     ImGui::TreePop();
   }
+}
+
+BSDFPreset ApproximateBSSRDF::get_preset() const {
+  BSDFPreset preset;
+  preset.type = BSDF_PRESET_APPROXIMATE_BSSRDF;
+  preset.vector_a = skin_color;
+  preset.scalar_a = roughness;
+  return preset;
+}
+
+void ApproximateBSSRDF::apply_preset(const BSDFPreset& preset) {
+  if (preset.type != BSDF_PRESET_APPROXIMATE_BSSRDF) return;
+  skin_color = preset.vector_a;
+  roughness = preset.scalar_a;
 }
 
 // Uncomment this version for iteration 2
@@ -239,9 +652,10 @@ Vector3D LayeredBSDF::f(const Vector3D wo, const Vector3D wi) {
   ct_val = min(ct_val, 1.0);
   
   Vector3D gloss(ct_val, ct_val, ct_val);
+  Vector3D gloss_tinted = gloss + (base_color * 0.15) * ct_val;
 
   // Blend based on thickness parameter
-  return saturated_base * (1.0 - thickness) + gloss * thickness;
+  return saturated_base * (1.0 - thickness) + gloss_tinted * thickness;
 }
 
 /**
@@ -305,13 +719,46 @@ void LayeredBSDF::render_debugger_node()
 {
   if (ImGui::TreeNode(this, "Layered BSDF"))
   {
-    DragDouble("Roughness", &roughness, 0.005);
-    DragDouble("Thickness", &thickness, 0.005);
-    DragDouble3("Base Color", &base_color[0], 0.005);
-    DragDouble("Saturation", &saturation, 0.005);
-    DragDouble("IOR", &ior, 0.005);
+    bool changed = false;
+    changed |= DragDouble("Gloss Roughness", &roughness, 0.005);
+    changed |= DragDouble("Thickness", &thickness, 0.005);
+    changed |= DragDouble3("Base Color", &base_color[0], 0.005);
+    changed |= DragDouble("Saturation", &saturation, 0.005);
+    changed |= DragDouble("IOR", &ior, 0.005);
+    ImGui::Spacing();
+    ImGui::Text("Base BSSRDF");
+    changed |= DragDouble3("Skin Color", &subsurface_color[0], 0.005);
+    changed |= DragDouble("Base Roughness", &subsurface_roughness, 0.005);
+    if (changed) {
+      sync_base_layer(base_layer, subsurface_color, subsurface_roughness);
+    }
     ImGui::TreePop();
   }
+}
+
+BSDFPreset LayeredBSDF::get_preset() const {
+  BSDFPreset preset;
+  preset.type = BSDF_PRESET_LAYERED;
+  preset.vector_a = base_color;
+  preset.vector_b = subsurface_color;
+  preset.scalar_a = roughness;
+  preset.scalar_b = thickness;
+  preset.scalar_c = saturation;
+  preset.scalar_d = ior;
+  preset.scalar_e = subsurface_roughness;
+  return preset;
+}
+
+void LayeredBSDF::apply_preset(const BSDFPreset& preset) {
+  if (preset.type != BSDF_PRESET_LAYERED) return;
+  roughness = preset.scalar_a;
+  thickness = preset.scalar_b;
+  base_color = preset.vector_a;
+  saturation = preset.scalar_c;
+  ior = preset.scalar_d;
+  subsurface_color = preset.vector_b;
+  subsurface_roughness = preset.scalar_e;
+  sync_base_layer(base_layer, subsurface_color, subsurface_roughness);
 }
 
 /**
@@ -361,9 +808,10 @@ Vector3D FastLayeredBSDF::f(const Vector3D wo, const Vector3D wi) {
   ct_val = min(ct_val, 1.0);
   
   Vector3D gloss(ct_val, ct_val, ct_val);
+  Vector3D gloss_tinted = gloss + (base_color * 0.15) * ct_val;
 
   // blend based on thickness parameter
-  return saturated_base * (1.0 - thickness) + gloss * thickness;
+  return saturated_base * (1.0 - thickness) + gloss_tinted * thickness;
 }
 
 /**
@@ -418,13 +866,46 @@ void FastLayeredBSDF::render_debugger_node()
 {
   if (ImGui::TreeNode(this, "Fast Layered BSDF"))
   {
-    DragDouble("Roughness", &roughness, 0.005);
-    DragDouble("Thickness", &thickness, 0.005);
-    DragDouble3("Base Color", &base_color[0], 0.005);
-    DragDouble("Saturation", &saturation, 0.005);
-    DragDouble("IOR", &ior, 0.005);
+    bool changed = false;
+    changed |= DragDouble("Gloss Roughness", &roughness, 0.005);
+    changed |= DragDouble("Thickness", &thickness, 0.005);
+    changed |= DragDouble3("Base Color", &base_color[0], 0.005);
+    changed |= DragDouble("Saturation", &saturation, 0.005);
+    changed |= DragDouble("IOR", &ior, 0.005);
+    ImGui::Spacing();
+    ImGui::Text("Base BSSRDF");
+    changed |= DragDouble3("Skin Color", &subsurface_color[0], 0.005);
+    changed |= DragDouble("Base Roughness", &subsurface_roughness, 0.005);
+    if (changed) {
+      sync_base_layer(base_layer, subsurface_color, subsurface_roughness);
+    }
     ImGui::TreePop();
   }
+}
+
+BSDFPreset FastLayeredBSDF::get_preset() const {
+  BSDFPreset preset;
+  preset.type = BSDF_PRESET_FAST_LAYERED;
+  preset.vector_a = base_color;
+  preset.vector_b = subsurface_color;
+  preset.scalar_a = roughness;
+  preset.scalar_b = thickness;
+  preset.scalar_c = saturation;
+  preset.scalar_d = ior;
+  preset.scalar_e = subsurface_roughness;
+  return preset;
+}
+
+void FastLayeredBSDF::apply_preset(const BSDFPreset& preset) {
+  if (preset.type != BSDF_PRESET_FAST_LAYERED) return;
+  roughness = preset.scalar_a;
+  thickness = preset.scalar_b;
+  base_color = preset.vector_a;
+  saturation = preset.scalar_c;
+  ior = preset.scalar_d;
+  subsurface_color = preset.vector_b;
+  subsurface_roughness = preset.scalar_e;
+  sync_base_layer(base_layer, subsurface_color, subsurface_roughness);
 }
 
 /**
@@ -446,7 +927,7 @@ Vector3D DisneyLayeredBSDF::f(const Vector3D wo, const Vector3D wi) {
   
   // this math flattens the diffuse shape at glancing angles to simulate 
   // light scattering through the edges of the lips (translucency).
-  double fss90 = roughness * cos_theta_d * cos_theta_d;
+  double fss90 = subsurface_roughness * cos_theta_d * cos_theta_d;
   
   auto schlick_weight = [](double cos_theta) {
     double m = clamp(1.0 - cos_theta, 0.0, 1.0);
@@ -460,7 +941,7 @@ Vector3D DisneyLayeredBSDF::f(const Vector3D wo, const Vector3D wi) {
   double ss_factor = 1.25 * (fss_in * fss_out * (1.0 / (cos_theta_i + cos_theta_o + 0.05) - 0.5) + 0.5);
   
   // mix in some dark red/pink for the subsurface bleed color
-  Vector3D subsurface_bleed = base_color * 0.8 + Vector3D(0.8, 0.1, 0.1) * 0.2;
+  Vector3D subsurface_bleed = subsurface_color * 0.8 + Vector3D(0.8, 0.1, 0.1) * 0.2;
   Vector3D flesh_contrib = (subsurface_bleed / PI) * ss_factor * clamp(saturation, 0.0, 1.5);
 
   // THE GLOSS LAYER (Realistic Lip Gloss)
@@ -607,15 +1088,48 @@ Vector3D DisneyLayeredBSDF::sample_f(const Vector3D wo, Vector3D* wi, double* pd
 
 void DisneyLayeredBSDF::render_debugger_node()
 {
-  if (ImGui::TreeNode(this, "Fast Layered BSDF"))
+  if (ImGui::TreeNode(this, "Disney Layered BSDF"))
   {
-    DragDouble("Roughness", &roughness, 0.005);
-    DragDouble("Thickness", &thickness, 0.005);
-    DragDouble3("Base Color", &base_color[0], 0.005);
-    DragDouble("Saturation", &saturation, 0.005);
-    DragDouble("IOR", &ior, 0.005);
+    bool changed = false;
+    changed |= DragDouble("Gloss Roughness", &roughness, 0.005);
+    changed |= DragDouble("Thickness", &thickness, 0.005);
+    changed |= DragDouble3("Base Color", &base_color[0], 0.005);
+    changed |= DragDouble("Saturation", &saturation, 0.005);
+    changed |= DragDouble("IOR", &ior, 0.005);
+    ImGui::Spacing();
+    ImGui::Text("Base BSSRDF");
+    changed |= DragDouble3("Skin Color", &subsurface_color[0], 0.005);
+    changed |= DragDouble("Base Roughness", &subsurface_roughness, 0.005);
+    if (changed) {
+      sync_base_layer(base_layer, subsurface_color, subsurface_roughness);
+    }
     ImGui::TreePop();
   }
+}
+
+BSDFPreset DisneyLayeredBSDF::get_preset() const {
+  BSDFPreset preset;
+  preset.type = BSDF_PRESET_DISNEY_LAYERED;
+  preset.vector_a = base_color;
+  preset.vector_b = subsurface_color;
+  preset.scalar_a = roughness;
+  preset.scalar_b = thickness;
+  preset.scalar_c = saturation;
+  preset.scalar_d = ior;
+  preset.scalar_e = subsurface_roughness;
+  return preset;
+}
+
+void DisneyLayeredBSDF::apply_preset(const BSDFPreset& preset) {
+  if (preset.type != BSDF_PRESET_DISNEY_LAYERED) return;
+  roughness = preset.scalar_a;
+  thickness = preset.scalar_b;
+  base_color = preset.vector_a;
+  saturation = preset.scalar_c;
+  ior = preset.scalar_d;
+  subsurface_color = preset.vector_b;
+  subsurface_roughness = preset.scalar_e;
+  sync_base_layer(base_layer, subsurface_color, subsurface_roughness);
 }
 
 } // namespace CGL

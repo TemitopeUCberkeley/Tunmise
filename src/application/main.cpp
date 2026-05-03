@@ -205,6 +205,7 @@ int main(int argc, char **argv) {
     delete sceneInfo;
     exit(0);
   }
+  PathtracerLauncherGUI::apply_material_overrides(sceneInfo);
 
   // create application
   Application *app = new Application(config, !write_to_file);

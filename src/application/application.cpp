@@ -53,7 +53,7 @@ void visual_debugger(GLScene::Scene** parent_scene, Application::Mode* current_m
 void Application::init() {
   if (gl_window) {
 
-    debugger = new VisualDebugger(&this->scene, (int*)&this->mode);
+    debugger = new VisualDebugger(this, &this->scene, (int*)&this->mode);
 
     textManager.init(use_hdpi);
     text_color = Color(1.0, 1.0, 1.0);
@@ -335,6 +335,31 @@ GLScene::SceneLight *Application::init_light(LightInfo& light,
       break;
   }
   return nullptr;
+}
+
+void Application::restart_render_after_material_edit() {
+  if (scene == nullptr) return;
+
+  switch (mode) {
+    case EDIT_MODE:
+      break;
+    case RENDER_MODE:
+      renderer->stop();
+      renderer->clear();
+      renderer->set_camera(&camera);
+      renderer->set_scene(scene->get_static_scene());
+      renderer->set_frame_size(screenW, screenH);
+      renderer->start_raytracing();
+      break;
+    case VISUALIZE_MODE:
+      renderer->stop();
+      renderer->clear();
+      renderer->set_camera(&camera);
+      renderer->set_scene(scene->get_static_scene());
+      renderer->set_frame_size(screenW, screenH);
+      renderer->start_visualizing();
+      break;
+  }
 }
 
 /**

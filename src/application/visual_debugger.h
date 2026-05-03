@@ -12,6 +12,8 @@ namespace CGL
     class Scene;
   }
 
+  class Application;
+
   class VisualDebugger
   {
   private:
@@ -21,10 +23,12 @@ namespace CGL
   public:
     bool running = true;
 
+    Application* application;
     GLScene::Scene** parent_scene;
     int* current_mode;
 
-    VisualDebugger(GLScene::Scene** parent_scene, int* current_mode);
+    VisualDebugger(Application* application, GLScene::Scene** parent_scene,
+                   int* current_mode);
     ~VisualDebugger();
 
     void render();

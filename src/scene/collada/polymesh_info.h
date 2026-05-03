@@ -27,7 +27,7 @@ struct PolymeshInfo : Instance {
 
   std::vector<Polygon>  polygons;   ///< polygons
 
-  MaterialInfo* material;  ///< material of the mesh
+  MaterialInfo* material = nullptr;  ///< material of the mesh
 
 }; // struct Polymesh
 

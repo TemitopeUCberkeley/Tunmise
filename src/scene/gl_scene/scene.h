@@ -18,7 +18,11 @@
 
 #include "pathtracer/ray.h"
 
-namespace CGL { namespace GLScene {
+namespace CGL {
+
+class BSDF;
+
+namespace GLScene {
 
 struct SelectionInfo {
   std::vector<std::string> info;
@@ -45,6 +49,10 @@ public:
   virtual void render_in_opengl() const = 0;
 
   virtual void render_debugger_node() { };
+  virtual BSDF* get_bsdf() { return nullptr; }
+  virtual void set_bsdf(BSDF* bsdf) { }
+  virtual std::string get_material_key() const { return ""; }
+  virtual std::string get_material_label() const { return ""; }
 
   /**
    * Given a transformation matrix from local to space to world space, returns

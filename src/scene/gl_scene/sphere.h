@@ -35,12 +35,17 @@ class Sphere : public SceneObject {
   MeshView *get_mesh_view() { return nullptr; }
 
   BSDF* get_bsdf();
+  void set_bsdf(BSDF* bsdf);
+  std::string get_material_key() const;
+  std::string get_material_label() const;
   SceneObjects::SceneObject *get_static_object();
 
 private:
   double r;
   Vector3D p;
   BSDF* bsdf;
+  std::string material_key;
+  std::string material_label;
   DrawStyle *style;
 
 };

@@ -12,7 +12,7 @@ namespace Collada {
 
 struct MaterialInfo : public Instance {
 
-  BSDF* bsdf;
+  BSDF* bsdf = nullptr;
   
   // Texture* tex; ///< texture
 

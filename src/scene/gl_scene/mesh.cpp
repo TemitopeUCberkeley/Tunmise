@@ -19,6 +19,25 @@ static const double low_threshold  = .1;
 static const double mid_threshold  = .2;
 static const double high_threshold = 1.0 - low_threshold;
 
+namespace {
+
+std::string make_material_key(const Collada::MaterialInfo* material) {
+  if (!material) return "";
+  if (!material->id.empty()) return material->id;
+  return material->name;
+}
+
+std::string make_material_label(const Collada::MaterialInfo* material) {
+  if (!material) return "";
+  if (!material->name.empty() && !material->id.empty()) {
+    return material->name + " (" + material->id + ")";
+  }
+  if (!material->name.empty()) return material->name;
+  return material->id;
+}
+
+} // namespace
+
 Mesh::Mesh(Collada::PolymeshInfo& polyMesh, const Matrix4x4& transform) {
 
   // Build halfedge mesh from polygon soup
@@ -37,6 +56,8 @@ Mesh::Mesh(Collada::PolymeshInfo& polyMesh, const Matrix4x4& transform) {
   mesh.build(polygons, vertices, texcoords);
   if (polyMesh.material) {
     bsdf = polyMesh.material->bsdf;
+    material_key = make_material_key(polyMesh.material);
+    material_label = make_material_label(polyMesh.material);
   } else {
     bsdf = new DiffuseBSDF(Vector3D(0.5f,0.5f,0.5f));
   }
@@ -529,6 +550,18 @@ MeshView* Mesh::get_mesh_view() {
 
 BSDF* Mesh::get_bsdf() {
   return bsdf;
+}
+
+void Mesh::set_bsdf(BSDF* next_bsdf) {
+  bsdf = next_bsdf;
+}
+
+std::string Mesh::get_material_key() const {
+  return material_key;
+}
+
+std::string Mesh::get_material_label() const {
+  return material_label;
 }
 
 SceneObjects::SceneObject *Mesh::get_static_object() {

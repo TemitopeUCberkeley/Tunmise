@@ -106,6 +106,7 @@ class Application : public Renderer {
   void scroll_event( float offset_x, float offset_y );
   void mouse_event( int key, int event, unsigned char mods );
   void keyboard_event( int key, int event, unsigned char mods  );
+  void restart_render_after_material_edit();
 
   void load(Collada::SceneInfo* sceneInfo);
   void render_to_file(std::string filename, size_t x, size_t y, size_t dx, size_t dy) { 

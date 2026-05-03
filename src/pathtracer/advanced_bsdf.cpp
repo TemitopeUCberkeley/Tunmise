@@ -35,6 +35,18 @@ void MirrorBSDF::render_debugger_node()
   }
 }
 
+BSDFPreset MirrorBSDF::get_preset() const {
+  BSDFPreset preset;
+  preset.type = BSDF_PRESET_MIRROR;
+  preset.vector_a = reflectance;
+  return preset;
+}
+
+void MirrorBSDF::apply_preset(const BSDFPreset& preset) {
+  if (preset.type != BSDF_PRESET_MIRROR) return;
+  reflectance = preset.vector_a;
+}
+
 // Microfacet BSDF //
 
 double MicrofacetBSDF::G(const Vector3D wo, const Vector3D wi) {
@@ -90,6 +102,22 @@ void MicrofacetBSDF::render_debugger_node()
   }
 }
 
+BSDFPreset MicrofacetBSDF::get_preset() const {
+  BSDFPreset preset;
+  preset.type = BSDF_PRESET_MICROFACET;
+  preset.vector_a = eta;
+  preset.vector_b = k;
+  preset.scalar_a = alpha;
+  return preset;
+}
+
+void MicrofacetBSDF::apply_preset(const BSDFPreset& preset) {
+  if (preset.type != BSDF_PRESET_MICROFACET) return;
+  eta = preset.vector_a;
+  k = preset.vector_b;
+  alpha = preset.scalar_a;
+}
+
 // Refraction BSDF //
 
 Vector3D RefractionBSDF::f(const Vector3D wo, const Vector3D wi) {
@@ -113,6 +141,22 @@ void RefractionBSDF::render_debugger_node()
     DragDouble("ior", &ior, 0.005);
     ImGui::TreePop();
   }
+}
+
+BSDFPreset RefractionBSDF::get_preset() const {
+  BSDFPreset preset;
+  preset.type = BSDF_PRESET_REFRACTION;
+  preset.vector_a = transmittance;
+  preset.scalar_a = roughness;
+  preset.scalar_b = ior;
+  return preset;
+}
+
+void RefractionBSDF::apply_preset(const BSDFPreset& preset) {
+  if (preset.type != BSDF_PRESET_REFRACTION) return;
+  transmittance = preset.vector_a;
+  roughness = preset.scalar_a;
+  ior = preset.scalar_b;
 }
 
 // Glass BSDF //
@@ -142,6 +186,24 @@ void GlassBSDF::render_debugger_node()
     DragDouble("ior", &ior, 0.005);
     ImGui::TreePop();
   }
+}
+
+BSDFPreset GlassBSDF::get_preset() const {
+  BSDFPreset preset;
+  preset.type = BSDF_PRESET_GLASS;
+  preset.vector_a = transmittance;
+  preset.vector_b = reflectance;
+  preset.scalar_a = roughness;
+  preset.scalar_b = ior;
+  return preset;
+}
+
+void GlassBSDF::apply_preset(const BSDFPreset& preset) {
+  if (preset.type != BSDF_PRESET_GLASS) return;
+  transmittance = preset.vector_a;
+  reflectance = preset.vector_b;
+  roughness = preset.scalar_a;
+  ior = preset.scalar_b;
 }
 
 void BSDF::reflect(const Vector3D wo, Vector3D* wi) {

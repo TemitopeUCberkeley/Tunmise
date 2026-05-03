@@ -4,6 +4,13 @@
 #include <cstring>
 #include <string>
 #include <sys/stat.h>
+
+namespace CGL {
+namespace Collada {
+struct SceneInfo;
+}
+}
+
 namespace PathtracerLauncherGUI {
 /**
  * @brief Container for all settings tweakable from the GUI. The GUI settings are then read by the 
@@ -65,6 +72,7 @@ struct GUISettings {
 };
 void render_loop(GLFWwindow *a_window, GUISettings &a_settings);
 int draw(GUISettings &a_settings);
+void apply_material_overrides(CGL::Collada::SceneInfo *scene_info);
 
 bool file_exists(const std::string &name);
 bool dae_exists(const std::string &name);

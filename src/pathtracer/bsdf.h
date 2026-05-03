@@ -9,6 +9,7 @@
 #include "util/image.h"
 
 #include <algorithm>
+#include <string>
 
 namespace CGL {
 
@@ -48,6 +49,49 @@ inline double sin_phi(const Vector3D w) {
 
 void make_coord_space(Matrix3x3& o2w, const Vector3D n);
 
+enum BSDFPresetType {
+  BSDF_PRESET_UNKNOWN,
+  BSDF_PRESET_DIFFUSE,
+  BSDF_PRESET_MICROFACET,
+  BSDF_PRESET_MIRROR,
+  BSDF_PRESET_REFRACTION,
+  BSDF_PRESET_GLASS,
+  BSDF_PRESET_EMISSION,
+  BSDF_PRESET_APPROXIMATE_BSSRDF,
+  BSDF_PRESET_LAYERED,
+  BSDF_PRESET_FAST_LAYERED,
+  BSDF_PRESET_DISNEY_LAYERED,
+};
+
+struct BSDFPreset {
+  BSDFPresetType type;
+  std::string material_id;
+  std::string material_name;
+  Vector3D vector_a;
+  Vector3D vector_b;
+  double scalar_a;
+  double scalar_b;
+  double scalar_c;
+  double scalar_d;
+  double scalar_e;
+
+  BSDFPreset()
+      : type(BSDF_PRESET_UNKNOWN),
+        vector_a(),
+        vector_b(),
+        scalar_a(0.0),
+        scalar_b(0.0),
+        scalar_c(0.0),
+        scalar_d(0.0),
+        scalar_e(0.0) {}
+};
+
+class BSDF;
+
+const char* bsdf_preset_type_name(BSDFPresetType type);
+bool render_bsdf_preset_controls(BSDFPreset& preset);
+BSDF* create_bsdf_from_preset(const BSDFPreset& preset);
+
 /**
  * Interface for BSDFs.
  * BSDFs (Bidirectional Scattering Distribution Functions)
@@ -58,6 +102,7 @@ void make_coord_space(Matrix3x3& o2w, const Vector3D n);
  */
 class BSDF {
  public:
+  virtual ~BSDF() {}
 
   /**
    * Evaluate BSDF.
@@ -100,6 +145,8 @@ class BSDF {
   virtual bool is_delta() const = 0;
 
   virtual void render_debugger_node() {};
+  virtual BSDFPreset get_preset() const;
+  virtual void apply_preset(const BSDFPreset& preset);
 
   /**
    * Reflection helper
@@ -134,6 +181,8 @@ class DiffuseBSDF : public BSDF {
   bool is_delta() const { return false; }
 
   void render_debugger_node();
+  BSDFPreset get_preset() const;
+  void apply_preset(const BSDFPreset& preset);
 
 private:
   /*
@@ -184,6 +233,8 @@ public:
   bool is_delta() const { return false; }
 
   void render_debugger_node();
+  BSDFPreset get_preset() const;
+  void apply_preset(const BSDFPreset& preset);
 
 private:
   Vector3D eta, k;
@@ -206,6 +257,8 @@ class MirrorBSDF : public BSDF {
   bool is_delta() const { return true; }
 
   void render_debugger_node();
+  BSDFPreset get_preset() const;
+  void apply_preset(const BSDFPreset& preset);
 
 private:
 
@@ -229,6 +282,8 @@ class RefractionBSDF : public BSDF {
   bool is_delta() const { return true; }
 
   void render_debugger_node();
+  BSDFPreset get_preset() const;
+  void apply_preset(const BSDFPreset& preset);
 
  private:
 
@@ -255,6 +310,8 @@ class GlassBSDF : public BSDF {
   bool is_delta() const { return true; }
 
   void render_debugger_node();
+  BSDFPreset get_preset() const;
+  void apply_preset(const BSDFPreset& preset);
 
  private:
 
@@ -279,6 +336,8 @@ class EmissionBSDF : public BSDF {
   bool is_delta() const { return false; }
 
   void render_debugger_node();
+  BSDFPreset get_preset() const;
+  void apply_preset(const BSDFPreset& preset);
 
  private:
 
@@ -309,6 +368,8 @@ class ApproximateBSSRDF : public BSDF {
   bool is_delta() const { return false; }
 
   void render_debugger_node();
+  BSDFPreset get_preset() const;
+  void apply_preset(const BSDFPreset& preset);
 
  private:
 
@@ -338,7 +399,8 @@ class LayeredBSDF : public BSDF {
               double saturation, double ior = 1.5)
     : roughness(roughness), thickness(thickness), base_color(base_color),
       saturation(saturation), ior(ior),
-      base_layer(new ApproximateBSSRDF(base_color, roughness)) { }
+      subsurface_color(base_color), subsurface_roughness(roughness),
+      base_layer(new ApproximateBSSRDF(subsurface_color, subsurface_roughness)) { }
 
   ~LayeredBSDF() {
     delete base_layer;
@@ -350,6 +412,8 @@ class LayeredBSDF : public BSDF {
   bool is_delta() const { return false; }
 
   void render_debugger_node();
+  BSDFPreset get_preset() const;
+  void apply_preset(const BSDFPreset& preset);
 
  private:
 
@@ -358,6 +422,8 @@ class LayeredBSDF : public BSDF {
   Vector3D base_color;
   double saturation;
   double ior;
+  Vector3D subsurface_color;
+  double subsurface_roughness;
   ApproximateBSSRDF* base_layer;
   CosineWeightedHemisphereSampler3D sampler;
 
@@ -380,7 +446,8 @@ class FastLayeredBSDF : public BSDF {
               double saturation, double ior = 1.5)
     : roughness(roughness), thickness(thickness), base_color(base_color),
       saturation(saturation), ior(ior),
-      base_layer(new ApproximateBSSRDF(base_color, roughness)) { }
+      subsurface_color(base_color), subsurface_roughness(roughness),
+      base_layer(new ApproximateBSSRDF(subsurface_color, subsurface_roughness)) { }
 
   ~FastLayeredBSDF() {
     delete base_layer;
@@ -392,6 +459,8 @@ class FastLayeredBSDF : public BSDF {
   bool is_delta() const { return false; }
 
   void render_debugger_node();
+  BSDFPreset get_preset() const;
+  void apply_preset(const BSDFPreset& preset);
 
  private:
 
@@ -400,6 +469,8 @@ class FastLayeredBSDF : public BSDF {
   Vector3D base_color;
   double saturation;
   double ior;
+  Vector3D subsurface_color;
+  double subsurface_roughness;
   ApproximateBSSRDF* base_layer;
   CosineWeightedHemisphereSampler3D sampler;
 
@@ -423,7 +494,8 @@ class DisneyLayeredBSDF : public BSDF {
               double saturation, double ior = 1.5)
     : roughness(roughness), thickness(thickness), base_color(base_color),
       saturation(saturation), ior(ior),
-      base_layer(new ApproximateBSSRDF(base_color, roughness)) { }
+      subsurface_color(base_color), subsurface_roughness(roughness),
+      base_layer(new ApproximateBSSRDF(subsurface_color, subsurface_roughness)) { }
 
   ~DisneyLayeredBSDF() {
     delete base_layer;
@@ -435,6 +507,8 @@ class DisneyLayeredBSDF : public BSDF {
   bool is_delta() const { return false; }
 
   void render_debugger_node();
+  BSDFPreset get_preset() const;
+  void apply_preset(const BSDFPreset& preset);
 
  private:
 
@@ -443,6 +517,8 @@ class DisneyLayeredBSDF : public BSDF {
   Vector3D base_color;
   double saturation;
   double ior;
+  Vector3D subsurface_color;
+  double subsurface_roughness;
   ApproximateBSSRDF* base_layer;
   CosineWeightedHemisphereSampler3D sampler;
 
