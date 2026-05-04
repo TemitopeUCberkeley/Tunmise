@@ -1,95 +1,366 @@
-<html>
-	<head>
-		<script src='https://cdnjs.cloudflare.com/ajax/libs/mathjax/2.7.4/MathJax.js?config=default'></script>
-		<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap" rel="stylesheet">
-		<style>
-			h1 {
-				text-align: center;
-			}
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Lip Service: Path Tracing Procedural Lip Gloss</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #24191c;
+      --muted: #6c5960;
+      --line: #e6d7db;
+      --paper: #fffafa;
+      --soft: #f8edf0;
+      --accent: #b72749;
+    }
 
-			.container {
-				margin: 0 auto;
-				padding: 60px 20%;
-			}
+    * {
+      box-sizing: border-box;
+    }
 
-			figure {
-				text-align: center;
-			}
+    body {
+      margin: 0;
+      background: var(--paper);
+      color: var(--ink);
+      font-family: Georgia, "Times New Roman", serif;
+      line-height: 1.58;
+    }
 
-			img {
-				display: inline-block;
-			}
+    main {
+      width: min(980px, calc(100% - 40px));
+      margin: 0 auto;
+      padding: 48px 0 64px;
+    }
 
-			body {
-				font-family: 'Inter', sans-serif;
-			}
-		</style>
-	</head>
-	<body>
-		<div class="container">
-		<h1>Lip Service: Pathtracing Viscous Dielectrics</h1>
-		<div style="text-align: center;">Names: Andrea Dao, Jade Wang, Tunmise Akanle, David Smith</div>
+    header {
+      border-bottom: 1px solid var(--line);
+      margin-bottom: 30px;
+      padding-bottom: 24px;
+    }
 
-		<br>
+    h1,
+    h2,
+    h3 {
+      font-family: Arial, Helvetica, sans-serif;
+      line-height: 1.15;
+      letter-spacing: 0;
+    }
 
-		Link to webpage: <a href="https://cal-cs184-student.github.io/hw-webpages-jadewang26/hw3/index.html">https://cal-cs184-student.github.io/hw-webpages-jadewang26/hw3/index.html</a>
-		<br>
-		<br>
-		Link to GitHub repository:  <a href="https://github.com/jadewang26/184-final-proj-lipgloss">https://github.com/jadewang26/184-final-proj-lipgloss</a>
-		<br>
-		<br>
-		Link to slides: <a href="https://docs.google.com/presentation/d/1dIrpw42yN3ua3OZ6_laWcuFGBSQ3E2fGl42-RILbaPw/edit?usp=sharing">https://docs.google.com/presentation/d/1dIrpw42yN3ua3OZ6_laWcuFGBSQ3E2fGl42-RILbaPw/edit?usp=sharing	</a>
-		<br>
-		<!--
-		We've already added one heading per part, to make your write-up as navigable when grading. Please fit your write-up within these sections!
-		-->
+    h1 {
+      color: var(--accent);
+      font-size: clamp(2rem, 5vw, 3.4rem);
+      margin: 0 0 10px;
+    }
 
-		<h2>Overview</h2>
-		So far, we have successfully established our foundational architecture by implementing a layered BRDF. The base lip layer utilizes a BSSRDF to capture the necessary subsurface scattering, and the top gloss layer uses a Cook-Torrance BRDF to accurately simulate specular reflections. To provide fine-grained control over the material's final appearance, we added parameters to the gloss layer such as Roughness (dictating the shine of the dielectric layer), Thickness (acting as the layer's opacity), Base Color, a Saturation multiplier, and the Index of Refraction (IOR). We then tested a normalized Blinn-Phong BRDF, which offered faster render times by avoiding the computationally expensive GGX distribution (uses square roots) but sacrificed overall gloss quality. We also tested the Disney BRDF, which yielded a more realistic, flesh-like appearance compared to the slightly plastic aesthetic of our initial Cook-Torrance implementation, so we will be going more in-depth with the Disney BRDF when we try experimenting with the parameters we’ve added to our gloss’ BRDF. We also are working on transitioning from testing on standard primitive spheres in a Cornell Box to loading and rendering a dedicated .dae (Collada) lip mesh, allowing us to evaluate our BRDFs on realistic lip geometry. 
-		<br>
-		<br>
-		In terms of our progress in regard to our schedule, we are running right on schedule, as we aimed to get a working render pipeline and start experimenting with different BRDFs around Week 2. I see no issue with proceeding as planning and getting our final renders done by Week 3 (for the different BRDFs and parameters) and aiming to get some of our reach goals done by Week 4.
-		<br>
-		<br>
+    h2 {
+      font-size: 1.45rem;
+      margin: 34px 0 10px;
+    }
 
+    h3 {
+      font-size: 1rem;
+      margin: 18px 0 6px;
+    }
 
+    p,
+    li {
+      font-size: 1.02rem;
+    }
 
-		<!---
-    <div style="display: flex; flex-direction: column; align-items: center;">
-			<table style="width: 100%; text-align: center; border-collapse: collapse;">
-			  <tr>
-				<td style="text-align: center;">
-				  <img src="images/sphere_original.png" width="400px"/>
-				  <figcaption>Original BRDF with Lambertian material (sphere)</figcaption>
-				</td>
-				<td style="text-align: center;">
-				  <img src="images/sphere_bssrdf.png" width="400px"/>
-				  <figcaption>BSSRDF layer (sphere)</figcaption>
-				</td>
-			</tr>
-			  <tr>
-				<td style="text-align: center;">
-				  <img src="images/sphere_layered_full.png" width="400px"/>
-				  <figcaption>First Iteration of Layered BRDF (sphere)</figcaption>
-				</td>
-				<td style="text-align: center;">
-				  <img src="images/sphere_layered_full2.png" width="400px"/>
-				  <figcaption>Second Iteration of Layered BRDF (sphere)</figcaption>
-				</td>
-				</tr>
-			  <tr>
-				<td style="text-align: center;">
-				  <img src="images/sphere_layered_full3.png" width="400px"/>
-				  <figcaption>Third Iteration of Layered BRDF (sphere)</figcaption>
-				</td>
-				<td style="text-align: center;">
-				  <img src="images/sphere_layered_full4.png" width="400px"/>
-				  <figcaption>Fourth Iteration of Layered BRDF (sphere)</figcaption>
-				</td>
-			  </tr>
-			</table>
-		</div>
-	-->
-	</div>
-	</body>
+    a {
+      color: var(--accent);
+    }
+
+    .meta {
+      color: var(--muted);
+      font-family: Arial, Helvetica, sans-serif;
+      font-size: 0.96rem;
+    }
+
+    .lede {
+      background: var(--soft);
+      border-left: 4px solid var(--accent);
+      margin: 22px 0 0;
+      padding: 16px 18px;
+    }
+
+    .grid {
+      display: grid;
+      gap: 18px;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      margin: 18px 0 8px;
+    }
+
+    figure {
+      margin: 0;
+      border: 1px solid var(--line);
+      background: #ffffff;
+      padding: 10px;
+    }
+
+    img {
+      display: block;
+      width: 100%;
+      height: auto;
+      background: #000000;
+    }
+
+    figcaption {
+      color: var(--muted);
+      font-family: Arial, Helvetica, sans-serif;
+      font-size: 0.88rem;
+      line-height: 1.35;
+      margin-top: 8px;
+    }
+
+    code {
+      font-family: "SFMono-Regular", Consolas, monospace;
+      font-size: 0.92em;
+    }
+
+    .command {
+      background: #2a2023;
+      color: #fff7f9;
+      display: block;
+      margin: 10px 0;
+      overflow-x: auto;
+      padding: 12px 14px;
+      white-space: pre;
+    }
+
+    ul {
+      padding-left: 22px;
+    }
+
+    @media (max-width: 760px) {
+      .grid {
+        grid-template-columns: 1fr;
+      }
+
+      main {
+        width: min(100% - 28px, 980px);
+        padding-top: 32px;
+      }
+    }
+
+    @media print {
+      body {
+        background: #ffffff;
+      }
+
+      main {
+        width: 100%;
+        padding: 0;
+      }
+
+      h1 {
+        font-size: 28pt;
+      }
+
+      h2 {
+        break-after: avoid;
+      }
+
+      .grid {
+        grid-template-columns: repeat(3, 1fr);
+      }
+
+      a {
+        color: inherit;
+        text-decoration: none;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <h1>Lip Service: Path Tracing Procedural Lip Gloss</h1>
+      <div class="meta">Andrea Dao, Jade Wang, Tunmise Akanle, David Smith</div>
+      <div class="meta">CS184 Final Project Report</div>
+      <p class="lede">
+        Our project extends the CS184 path tracer to render human lips with more believable
+        geometry and material response. We built a procedural lip mesh, implemented and tuned
+        layered lip BSDFs, and added variant selection so the same scene can render a standard,
+        glossy, or matte version of the lips.
+      </p>
+    </header>
+
+    <section>
+      <h2>Abstract</h2>
+      <p>
+        Realistic lips are difficult to render because their appearance comes from both shape
+        and material. A simple pink surface can look flat, while a purely specular surface can
+        look like plastic. We approached the problem by combining a custom parametric lip mesh
+        with a layered material model: a soft flesh-like base layer and a thin dielectric gloss
+        layer. The final renderer supports three versions of the same model, selected from the
+        command line: a balanced default lip, a wet glossy lip, and a non-glossy matte lip. Our
+        final results show that small geometric changes, especially the mouth crease, lip roll,
+        Cupid's bow depth, and lower lip volume, have as much visual impact as the shader.
+      </p>
+    </section>
+
+    <section>
+      <h2>Technical Approach</h2>
+      <h3>Rendering Pipeline</h3>
+      <p>
+        The project builds on the CS184 path tracer framework. The renderer loads a Collada
+        scene, creates primitives, builds a BVH acceleration structure, and estimates radiance
+        using Monte Carlo path tracing. This connects directly to the course material in
+        <code>9-11-ray-tracing+acceleration.pptx</code>, <code>12-integration.pdf</code>, and
+        <code>13-global-illumination-path-tracing.pdf</code>: rays are intersected against
+        scene geometry, BSDFs are sampled to choose bounce directions, and recursive radiance is
+        weighted by the sampled BSDF value, cosine term, probability density, and Russian
+        roulette survival probability.
+      </p>
+      <p>
+        We kept the overall path tracing estimator from the class code, but changed the scene
+        and material system around it. The main path tracer still calls <code>sample_f</code>
+        on the surface BSDF and divides by the returned PDF. That meant our layered lip material
+        had to report a consistent mixture PDF whenever it sampled either the flesh layer or the
+        gloss layer. Otherwise, the lips became unstable: highlights were either too dim,
+        too bright, or visibly noisy.
+      </p>
+
+      <h3>Procedural Lip Geometry</h3>
+      <p>
+        Instead of relying on a texture or a downloaded mesh, we generate the lip model in
+        <code>src/pathtracer/generate_lip.cpp</code>. The mesh is made from three parametric
+        patches: an upper lip, a lower lip, and a narrow recessed mouth crease. Each patch is
+        tessellated into triangles and exported into <code>dae/final-project/lips1.dae</code>
+        with per-vertex normals. The upper lip function shapes the Cupid's bow, side tapering,
+        central swell, and border recession. The lower lip function adds a larger central
+        pillow and softer lower border. The mouth crease sits slightly behind both lips, which
+        makes the line between the upper and lower lip read as depth instead of a bent surface.
+      </p>
+      <p>
+        This part of the project used ideas from the CS184 mesh lecture,
+        <code>08-meshes.pptx</code>. Our representation is not a general subdivision surface;
+        it is a direct procedural triangle mesh. That was a deliberate subset of the mesh
+        techniques covered in class because the lip shape needed to be easy to tune. Parameters
+        such as the Cupid's bow dip, vertical folds, central lower-lip bulge, corner recession,
+        and crease depth gave us artistic control while still producing ordinary indexed
+        triangle geometry that the existing BVH and path tracer could render.
+      </p>
+
+      <h3>Layered Lip Material</h3>
+      <p>
+        The lip material is represented as a layered BSDF in <code>src/pathtracer/bsdf.cpp</code>
+        and loaded from Collada in <code>src/scene/collada/collada.cpp</code>. The base layer is
+        an approximate BSSRDF-like response that gives the lips their flesh tone. It is not a
+        full physically exact subsurface scattering simulation, but it approximates the softer
+        forward-scattered look of skin by modulating diffuse response with roughness and color.
+        Over that base, we add a dielectric gloss layer inspired by microfacet and Disney-style
+        shading ideas from <code>14-material.pdf</code>. Roughness controls highlight width,
+        thickness controls how much the gloss layer contributes, base color controls the red and
+        pink body tone, saturation controls color intensity, and IOR affects Fresnel-style edge
+        reflectance.
+      </p>
+      <p>
+        We implemented several layered variants during development: an original layered model,
+        a faster Blinn-Phong-like approximation, and a Disney-inspired layered model. The final
+        Collada loader constructs <code>DisneyLayeredBSDF</code> for <code>&lt;layered&gt;</code>
+        materials because it gave the most human-looking balance of soft flesh color and wet
+        highlights. Compared with the references, our implementation is intentionally simplified:
+        it does not solve full diffusion profiles for translucent skin and does not use texture
+        maps. The vertical lip folds and anatomical variation come from geometry, while color and
+        gloss are procedural material parameters.
+      </p>
+
+      <h3>Render Variants</h3>
+      <p>
+        The generated Collada scene contains three lip nodes with separate materials:
+        <code>Lips</code>, <code>GlossyLips</code>, and <code>MatteLips</code>. The application
+        code in <code>src/application/main.cpp</code> adds a <code>-v</code> option so a user can
+        render exactly one variant:
+      </p>
+      <code class="command">/private/tmp/lipgloss-build/pathtracer -v glossy -s 32 -l 8 -m 5 -t 8 -r 700 500 -f glossy.png dae/final-project/lips1.dae</code>
+      <p>
+        The default material uses roughness <code>0.055</code> and thickness <code>0.50</code>.
+        The glossy material lowers roughness to <code>0.018</code> and raises thickness to
+        <code>0.82</code>. The matte material raises roughness to <code>0.65</code> and reduces
+        thickness to <code>0.02</code>. This gave us a compact way to compare material response
+        without manually editing the scene file before every render.
+      </p>
+    </section>
+
+    <section>
+      <h2>Problems Encountered</h2>
+      <p>
+        The first major problem was that early renders looked more like a smooth toy object than
+        a human lip. The material was doing most of the work, but the shape did not provide
+        enough anatomical cues. We fixed this by moving more realism into the mesh: a shallower
+        Cupid's bow, raised upper-lip lobes, a fuller lower lip, pinched corners, vertical folds,
+        and a recessed dark crease at the center intersection.
+      </p>
+      <p>
+        A second problem was the lower-right area of the lip appearing bent or incorrectly
+        oriented. That came from the surface parameterization, normals, and winding interacting
+        with the camera-facing side of the mesh. We addressed it by generating explicit normals
+        from finite-difference tangents, flipping normals that faced away from the camera, and
+        separating the mouth crease into its own narrow patch instead of forcing the lower lip to
+        fold into the same line.
+      </p>
+      <p>
+        A final problem was workflow. Rendering all three lip variants at once made comparisons
+        cluttered, and changing materials inside one Collada file was inconvenient. We solved
+        this by emitting three named nodes and filtering them with the <code>-v</code> option at
+        runtime. This made the renderer much easier to use for final-image iteration.
+      </p>
+    </section>
+
+    <section>
+      <h2>Lessons Learned</h2>
+      <p>
+        The biggest lesson was that realism is not only a shader problem. For lips, geometry,
+        silhouette, and the crease shadow are essential. A physically inspired BSDF can create
+        convincing highlights, but it cannot rescue a shape that lacks volume or anatomical
+        structure. We also learned that layered materials require careful sampling. Since the
+        path tracer divides by the PDF returned from <code>sample_f</code>, the PDF must describe
+        the same mixture that the BSDF evaluates. Small inconsistencies create large visual
+        changes in recursive path tracing.
+      </p>
+      <p>
+        We also learned the value of building tools around the renderer. The procedural generator
+        and variant selector made iteration much faster than editing thousands of vertices or
+        swapping scene files by hand. That let us spend time judging visual results instead of
+        fighting the pipeline.
+      </p>
+    </section>
+
+    <section>
+      <h2>Results</h2>
+      <p>
+        The final images below were rendered from <code>dae/final-project/lips1.dae</code> at
+        700 by 500 resolution with 32 samples per pixel, 8 light samples, max ray depth 5, and
+        8 render threads.
+      </p>
+      <div class="grid">
+        <figure>
+          <img src="images/final_default.png" alt="Default path-traced lip render">
+          <figcaption>Default layered lip: balanced flesh color and controlled gloss.</figcaption>
+        </figure>
+        <figure>
+          <img src="images/final_glossy.png" alt="Glossy path-traced lip render">
+          <figcaption>Glossy lip: lower roughness and higher gloss thickness for a wet finish.</figcaption>
+        </figure>
+        <figure>
+          <img src="images/final_matte.png" alt="Matte path-traced lip render">
+          <figcaption>Matte lip: high roughness and almost no gloss layer.</figcaption>
+        </figure>
+      </div>
+    </section>
+
+    <section>
+      <h2>References</h2>
+      <ul>
+        <li>CS184 lecture slides: <code>08-meshes.pptx</code>, <code>9-11-ray-tracing+acceleration.pptx</code>, <code>12-integration.pdf</code>, <code>13-global-illumination-path-tracing.pdf</code>, <code>14-material.pdf</code>, and <code>15-Color-and-Perception.pdf</code>.</li>
+        <li>Robert L. Cook and Kenneth E. Torrance, "A Reflectance Model for Computer Graphics," 1982.</li>
+        <li>Brent Burley, "Physically-Based Shading at Disney," 2012.</li>
+        <li>Henrik Wann Jensen et al., "A Practical Model for Subsurface Light Transport," 2001.</li>
+      </ul>
+    </section>
+  </main>
+</body>
 </html>
