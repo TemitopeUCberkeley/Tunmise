@@ -212,6 +212,120 @@ bool sample_disney_gloss_lobe(const Vector3D& wo, double roughness,
   return *pdf > 0.0;
 }
 
+double layered_gloss_alpha2(double roughness) {
+  double alpha = max(roughness * roughness, 0.001);
+  return alpha * alpha;
+}
+
+// Convert the GGX half-vector density used by LayeredBSDF::f() into a
+// direction-space pdf for wi.
+double layered_gloss_pdf(const Vector3D& wo, const Vector3D& wi,
+                         double roughness) {
+  if (wo.z <= 0.0 || wi.z <= 0.0) return 0.0;
+
+  Vector3D h = wo + wi;
+  if (h.norm2() == 0.0) return 0.0;
+  h.normalize();
+
+  double wo_dot_h = dot(wo, h);
+  if (wo_dot_h <= 0.0) return 0.0;
+
+  double alpha2 = layered_gloss_alpha2(roughness);
+  double D = ggx_ndf(max(h.z, 0.0), alpha2);
+  return D * max(h.z, 0.0) / (4.0 * wo_dot_h);
+}
+
+// Sample the same GGX gloss lobe used by LayeredBSDF::f() so recursive
+// transport uses a consistent gloss distribution and pdf.
+bool sample_layered_gloss_lobe(const Vector3D& wo, double roughness,
+                               Vector3D* wi, double* pdf) {
+  if (wo.z <= 0.0) {
+    *pdf = 0.0;
+    return false;
+  }
+
+  double alpha2 = layered_gloss_alpha2(roughness);
+  Vector2D u(random_uniform(), random_uniform());
+  double phi = 2.0 * PI * u.y;
+  double tan_theta2 = alpha2 * u.x / max(1.0 - u.x, 1e-6);
+  double cos_theta = 1.0 / sqrt(1.0 + tan_theta2);
+  double sin_theta = sqrt(max(0.0, 1.0 - cos_theta * cos_theta));
+  Vector3D h(cos(phi) * sin_theta, sin(phi) * sin_theta, cos_theta);
+
+  double wo_dot_h = dot(wo, h);
+  if (wo_dot_h <= 0.0) {
+    *pdf = 0.0;
+    return false;
+  }
+
+  *wi = 2.0 * wo_dot_h * h - wo;
+  if (wi->z <= 0.0) {
+    *pdf = 0.0;
+    return false;
+  }
+
+  *pdf = layered_gloss_pdf(wo, *wi, roughness);
+  return *pdf > 0.0;
+}
+
+double fast_layered_gloss_exponent(double roughness) {
+  double r4 = max(pow(roughness, 4.0), 0.0001);
+  return max((2.0 / r4) - 2.0, 0.0);
+}
+
+// Convert the normalized Blinn-Phong half-vector density used by the fast
+// layered gloss term into a direction-space pdf for wi.
+double fast_layered_gloss_pdf(const Vector3D& wo, const Vector3D& wi,
+                              double roughness) {
+  if (wo.z <= 0.0 || wi.z <= 0.0) return 0.0;
+
+  Vector3D h = wo + wi;
+  if (h.norm2() == 0.0) return 0.0;
+  h.normalize();
+
+  double wo_dot_h = dot(wo, h);
+  if (wo_dot_h <= 0.0) return 0.0;
+
+  double exponent = fast_layered_gloss_exponent(roughness);
+  double cos_theta_h = max(h.z, 0.0);
+  double half_vector_pdf =
+      ((exponent + 2.0) / (2.0 * PI)) * pow(cos_theta_h, exponent + 1.0);
+  return half_vector_pdf / (4.0 * wo_dot_h);
+}
+
+// Sample the same normalized Blinn-Phong gloss lobe used by
+// FastLayeredBSDF::f(). This keeps the fast layered evaluator and sampler
+// aligned so recursive bounces use a consistent f / pdf ratio.
+bool sample_fast_layered_gloss_lobe(const Vector3D& wo, double roughness,
+                                    Vector3D* wi, double* pdf) {
+  if (wo.z <= 0.0) {
+    *pdf = 0.0;
+    return false;
+  }
+
+  double exponent = fast_layered_gloss_exponent(roughness);
+  Vector2D u(random_uniform(), random_uniform());
+  double phi = 2.0 * PI * u.y;
+  double cos_theta = pow(1.0 - u.x, 1.0 / (exponent + 2.0));
+  double sin_theta = sqrt(max(0.0, 1.0 - cos_theta * cos_theta));
+  Vector3D h(cos(phi) * sin_theta, sin(phi) * sin_theta, cos_theta);
+
+  double wo_dot_h = dot(wo, h);
+  if (wo_dot_h <= 0.0) {
+    *pdf = 0.0;
+    return false;
+  }
+
+  *wi = 2.0 * wo_dot_h * h - wo;
+  if (wi->z <= 0.0) {
+    *pdf = 0.0;
+    return false;
+  }
+
+  *pdf = fast_layered_gloss_pdf(wo, *wi, roughness);
+  return *pdf > 0.0;
+}
+
 BSDFPreset make_default_bsdf_preset(BSDFPresetType type) {
   BSDFPreset preset;
   preset.type = type;
@@ -589,25 +703,33 @@ void EmissionBSDF::apply_preset(const BSDFPreset& preset) {
  * Uses a diffuse-like model with color to approximate subsurface scattering.
  */
 Vector3D ApproximateBSSRDF::f(const Vector3D wo, const Vector3D wi) {
-  // Approximate BSSRDF using a diffuse Lambertian model
-  // The color-based reflectance simulates subsurface scattering
-  return skin_color / PI;
+  // Treat this as a one-sided diffuse-like lobe. Letting it scatter when
+  // either direction is below the surface causes bright leaks and noisy
+  // artifacts around thin or open mesh boundaries.
+  if (wo.z <= 0.0 || wi.z <= 0.0) return Vector3D(0, 0, 0);
+
+  // Keep the slight angular tint from the older implementation, but put it in
+  // f() itself so direct and recursive paths evaluate the same material.
+  double cosine_factor = cos_theta(wi);
+  Vector3D modulated_color = skin_color * (0.8 + 0.2 * cosine_factor);
+  return modulated_color / PI;
 }
 
 /**
  * Sample Approximate BSSRDF.
- * Uses cosine-weighted hemisphere sampling with slight color-based modulation.
+ * Uses cosine-weighted hemisphere sampling.
  */
 Vector3D ApproximateBSSRDF::sample_f(const Vector3D wo, Vector3D *wi, double *pdf) {
+  if (wo.z <= 0.0) {
+    *pdf = 0.0;
+    return Vector3D(0, 0, 0);
+  }
+
   // Sample using cosine-weighted hemisphere distribution
   *wi = sampler.get_sample(pdf);
-  
-  // Return BSDF value at sampled direction
-  // Apply slight angle-dependent coloring to simulate subsurface scattering
-  double cosine_factor = cos_theta(*wi);
-  Vector3D modulated_color = skin_color * (0.8 + 0.2 * cosine_factor);
-  
-  return modulated_color / PI;
+
+  // Return the same diffuse-like BSSRDF that f() evaluates.
+  return f(wo, *wi);
 }
 
 void ApproximateBSSRDF::render_debugger_node()
@@ -741,55 +863,41 @@ Vector3D LayeredBSDF::f(const Vector3D wo, const Vector3D wi) {
  */
 
 Vector3D LayeredBSDF::sample_f(const Vector3D wo, Vector3D* wi, double* pdf) {
-  // Randomly choose between base and gloss layer based on thickness
-  double random_sample = random_uniform();
-  
-  if (random_sample < thickness) {
-    // Sample from gloss (specular) layer using cosine-weighted perturbation around reflection
-    Vector3D reflected_dir;
-    reflect(wo, &reflected_dir);
-    
-    if (roughness > 1e-5) {
-      // Sample perturbation from cosine-weighted hemisphere
-      double perturb_pdf;
-      Vector3D perturbation = sampler.get_sample(&perturb_pdf);
-      
-      // Blend between reflection and perturbed direction based on roughness
-      // Higher roughness = more diffuse, lower roughness = more mirror-like
-      double blend_factor = min(roughness, 1.0);
-      *wi = (reflected_dir * (1.0 - blend_factor) + perturbation * blend_factor);
-      wi->normalize();
-      
-      // PDF: (thickness) × (blended cosine-weighted distribution)
-      // When blend_factor = 0 (mirror), PDF approaches delta; when = 1 (diffuse), PDF = cos/PI
-      *pdf = thickness * (perturb_pdf * blend_factor + (1.0 - blend_factor) * 0.25);
-    } else {
-      // Perfect mirror reflection - use a small but reasonable PDF
-      *wi = reflected_dir;
-      *pdf = thickness * 0.25; // Smooth minimum PDF to avoid singularities
-    }
-    
-  } else {
-    // Sample from base (diffuse) layer using cosine-weighted hemisphere
-    double base_pdf;
-    base_layer->sample_f(wo, wi, &base_pdf);
-    
-    // PDF: (1.0 - thickness) × base_layer_pdf
-    *pdf = (1.0 - thickness) * base_pdf;
-  }
-  
-  // Evaluate BSDF at sampled direction
-  Vector3D result = f(wo, *wi);
-  
-  // Return the BSDF value. The path integrator applies the 1 / pdf factor.
-  if (*pdf > 1e-10) {
-    result.x = min(result.x, 10.0);
-    result.y = min(result.y, 10.0);
-    result.z = min(result.z, 10.0);
-    return result;
-  } else {
+  if (wo.z <= 0.0) {
+    *pdf = 0.0;
     return Vector3D(0, 0, 0);
   }
+
+  // The layered material is a base-plus-gloss mixture. We sample one lobe at
+  // a time, but because sample_f returns the full BSDF evaluation, the
+  // denominator must be the full mixture pdf.
+  double gloss_weight = clamp(thickness, 0.0, 1.0);
+  double base_weight = 1.0 - gloss_weight;
+
+  if (random_uniform() < gloss_weight) {
+    double sampled_gloss_pdf = 0.0;
+    if (!sample_layered_gloss_lobe(wo, roughness, wi, &sampled_gloss_pdf)) {
+      *pdf = 0.0;
+      return Vector3D(0, 0, 0);
+    }
+  } else {
+    double base_pdf;
+    base_layer->sample_f(wo, wi, &base_pdf);
+    if (base_pdf <= 0.0 || wi->z <= 0.0) {
+      *pdf = 0.0;
+      return Vector3D(0, 0, 0);
+    }
+  }
+
+  double base_pdf = cosine_hemisphere_pdf(*wi);
+  double gloss_pdf = layered_gloss_pdf(wo, *wi, roughness);
+  *pdf = base_weight * base_pdf + gloss_weight * gloss_pdf;
+
+  if (*pdf <= 1e-10) {
+    return Vector3D(0, 0, 0);
+  }
+
+  return f(wo, *wi);
 }
 
 void LayeredBSDF::render_debugger_node()
@@ -895,48 +1003,41 @@ Vector3D FastLayeredBSDF::f(const Vector3D wo, const Vector3D wi) {
  * sample fast layered BSDF.
  */
 Vector3D FastLayeredBSDF::sample_f(const Vector3D wo, Vector3D* wi, double* pdf) {
-  // randomly choose between base and gloss layer based on thickness
-  double random_sample = random_uniform();
-  
-  if (random_sample < thickness) {
-    // simpler sampling strategy for performance using a direct function of roughness.
-    Vector3D reflected_dir;
-    reflect(wo, &reflected_dir);
-    
-    if (roughness > 1e-5) {
-      double perturb_pdf;
-      Vector3D perturbation = sampler.get_sample(&perturb_pdf);
-      
-      // blend factor scaled by roughness
-      double blend_factor = min(roughness, 1.0);
-      *wi = (reflected_dir * (1.0 - blend_factor) + perturbation * blend_factor);
-      wi->normalize();
-      
-      *pdf = thickness * (perturb_pdf * blend_factor + (1.0 - blend_factor) * 0.25);
-    } else {
-      *wi = reflected_dir;
-      *pdf = thickness * 0.25; 
-    }
-    
-  } else {
-    // sample from base (diffuse) layer
-    double base_pdf;
-    base_layer->sample_f(wo, wi, &base_pdf);
-    *pdf = (1.0 - thickness) * base_pdf;
-  }
-  
-  // evaluate BSDF at sampled direction
-  Vector3D result = f(wo, *wi);
-  
-  // Return the BSDF value. The path integrator applies the 1 / pdf factor.
-  if (*pdf > 1e-10) {
-    result.x = min(result.x, 10.0);
-    result.y = min(result.y, 10.0);
-    result.z = min(result.z, 10.0);
-    return result;
-  } else {
+  if (wo.z <= 0.0) {
+    *pdf = 0.0;
     return Vector3D(0, 0, 0);
   }
+
+  // The fast layered model is still a two-lobe mixture: base flesh plus a
+  // fast gloss approximation. We sample one branch, then report the pdf of
+  // the full mixture because sample_f returns the full BSDF value f(wo, wi).
+  double gloss_weight = clamp(thickness, 0.0, 1.0);
+  double base_weight = 1.0 - gloss_weight;
+
+  if (random_uniform() < gloss_weight) {
+    double sampled_gloss_pdf = 0.0;
+    if (!sample_fast_layered_gloss_lobe(wo, roughness, wi, &sampled_gloss_pdf)) {
+      *pdf = 0.0;
+      return Vector3D(0, 0, 0);
+    }
+  } else {
+    double base_pdf;
+    base_layer->sample_f(wo, wi, &base_pdf);
+    if (base_pdf <= 0.0 || wi->z <= 0.0) {
+      *pdf = 0.0;
+      return Vector3D(0, 0, 0);
+    }
+  }
+
+  double base_pdf = cosine_hemisphere_pdf(*wi);
+  double gloss_pdf = fast_layered_gloss_pdf(wo, *wi, roughness);
+  *pdf = base_weight * base_pdf + gloss_weight * gloss_pdf;
+
+  if (*pdf <= 1e-10) {
+    return Vector3D(0, 0, 0);
+  }
+
+  return f(wo, *wi);
 }
 
 void FastLayeredBSDF::render_debugger_node()

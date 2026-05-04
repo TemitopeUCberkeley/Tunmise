@@ -141,12 +141,13 @@ namespace CGL
 
   bool DragDouble3(const char* label, const double* p_data, float v_speed)
   {
-    return ImGui::DragScalarN(label, ImGuiDataType_Double, (void*)p_data, 3, v_speed);
+    return ImGui::InputScalarN(label, ImGuiDataType_Double, (void*)p_data,
+                               3, nullptr, nullptr, "%.6f");
   }
 
   bool DragDouble(const char* label, const double* p_data, float v_speed)
   {
-    return ImGui::DragScalar(label, ImGuiDataType_Double, (void*)p_data, v_speed);
+    return ImGui::InputDouble(label, (double*)p_data, 0.0, 0.0, "%.6f");
   }
 
   bool SliderDouble3(const char* label, const double* p_data, float min, float max)
