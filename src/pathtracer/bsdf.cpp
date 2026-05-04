@@ -135,6 +135,83 @@ double infer_saturation(const BSDFPreset& preset) {
   }
 }
 
+// Cosine-weighted hemisphere density used by the flesh/base layer.
+// We recompute this even after a gloss sample so the final pdf can be the
+// full two-lobe mixture instead of only the selected branch density.
+double cosine_hemisphere_pdf(const Vector3D& wi) {
+  return wi.z > 0.0 ? wi.z / PI : 0.0;
+}
+
+// Keep the gloss roughness remap identical to the evaluator. If the sampler
+// and evaluator use different roughness values, recursive f / pdf weighting
+// drifts and the lips darken or brighten incorrectly at higher ray depths.
+double disney_gloss_roughness(double roughness) {
+  return max(roughness * 0.8, 0.02);
+}
+
+// GGX normal distribution function used by the Disney gloss lobe.
+// This gives the density of half-vectors around the surface normal.
+double ggx_ndf(double cos_theta_h, double alpha2) {
+  if (cos_theta_h <= 0.0) return 0.0;
+  double cos2_theta_h = cos_theta_h * cos_theta_h;
+  double denom = PI * pow(cos2_theta_h * (alpha2 - 1.0) + 1.0, 2.0);
+  return denom > 0.0 ? alpha2 / denom : 0.0;
+}
+
+// Convert the GGX half-vector density into a direction-space pdf for wi.
+// This is the gloss branch density that matches the Cook-Torrance-style
+// gloss term evaluated in DisneyLayeredBSDF::f().
+double disney_gloss_pdf(const Vector3D& wo, const Vector3D& wi, double roughness) {
+  if (wo.z <= 0.0 || wi.z <= 0.0) return 0.0;
+
+  Vector3D h = wo + wi;
+  if (h.norm2() == 0.0) return 0.0;
+  h.normalize();
+
+  double wo_dot_h = dot(wo, h);
+  if (wo_dot_h <= 0.0) return 0.0;
+
+  double alpha = disney_gloss_roughness(roughness);
+  double alpha2 = max(alpha * alpha, 0.0004);
+  double D = ggx_ndf(max(h.z, 0.0), alpha2);
+  return D * max(h.z, 0.0) / (4.0 * wo_dot_h);
+}
+
+// Sample the same GGX gloss lobe that DisneyLayeredBSDF::f() evaluates.
+// The old code used a reflected direction plus a cosine perturbation, which
+// did not match the lobe being evaluated and caused recursive bias.
+bool sample_disney_gloss_lobe(const Vector3D& wo, double roughness,
+                              Vector3D* wi, double* pdf) {
+  if (wo.z <= 0.0) {
+    *pdf = 0.0;
+    return false;
+  }
+
+  double alpha = disney_gloss_roughness(roughness);
+  double alpha2 = max(alpha * alpha, 0.0004);
+  Vector2D u(random_uniform(), random_uniform());
+  double phi = 2.0 * PI * u.y;
+  double tan_theta2 = alpha2 * u.x / max(1.0 - u.x, 1e-6);
+  double cos_theta = 1.0 / sqrt(1.0 + tan_theta2);
+  double sin_theta = sqrt(max(0.0, 1.0 - cos_theta * cos_theta));
+  Vector3D h(cos(phi) * sin_theta, sin(phi) * sin_theta, cos_theta);
+
+  double wo_dot_h = dot(wo, h);
+  if (wo_dot_h <= 0.0) {
+    *pdf = 0.0;
+    return false;
+  }
+
+  *wi = 2.0 * wo_dot_h * h - wo;
+  if (wi->z <= 0.0) {
+    *pdf = 0.0;
+    return false;
+  }
+
+  *pdf = disney_gloss_pdf(wo, *wi, roughness);
+  return *pdf > 0.0;
+}
+
 BSDFPreset make_default_bsdf_preset(BSDFPresetType type) {
   BSDFPreset preset;
   preset.type = type;
@@ -1026,64 +1103,56 @@ Vector3D DisneyLayeredBSDF::f(const Vector3D wo, const Vector3D wi) {
 }
 
 Vector3D DisneyLayeredBSDF::sample_f(const Vector3D wo, Vector3D* wi, double* pdf) {
-  // if the ray is coming from inside the geometry, catch it early
   if (wo.z <= 0.0) {
     *pdf = 0.0;
     return Vector3D(0, 0, 0);
   }
 
-  double random_sample = random_uniform();
-  
-  // Use the same roughness scaling as in f()
-  double gloss_roughness = max(roughness * 0.8, 0.02);
+  // --- Mixture Weights ---
+  // The layered lip model is evaluated as a blend of flesh/base and gloss.
+  // We still sample one branch at a time for efficiency, but the final pdf
+  // must be the density of the full mixture because we return the full BSDF
+  // value f(wo, wi), not only the chosen branch contribution.
+  double gloss_weight = clamp(thickness, 0.0, 1.0);
+  double base_weight = 1.0 - gloss_weight;
 
-  if (random_sample < thickness) {
-    // SAMPLE THE GLOSS LAYER (Specular)
-    
-    // find perfect mirror reflection direction
-    Vector3D reflected_dir;
-    reflect(wo, &reflected_dir);
-    
-    // get random perturbation based on a cosine-weighted hemisphere
-    double perturb_pdf;
-    Vector3D perturbation = sampler.get_sample(&perturb_pdf);
-    
-    // blend perfect reflection with the perturbation based on gloss roughness
-    // smoother gloss means the specular lobe is tighter
-    *wi = (reflected_dir * (1.0 - gloss_roughness) + perturbation * gloss_roughness);
-    wi->normalize();
-    
-    // calculate the probability density of picking this exact direction
-    *pdf = thickness * (perturb_pdf * gloss_roughness + (1.0 - gloss_roughness) * 0.25);
-    
+  // --- Sample One Branch ---
+  // Pick a branch using thickness, then generate wi from that branch's sampler.
+  // The gloss branch now uses GGX half-vector sampling so it matches the lobe
+  // computed in DisneyLayeredBSDF::f().
+  if (random_uniform() < gloss_weight) {
+    double sampled_gloss_pdf = 0.0;
+    if (!sample_disney_gloss_lobe(wo, roughness, wi, &sampled_gloss_pdf)) {
+      *pdf = 0.0;
+      return Vector3D(0, 0, 0);
+    }
   } else {
-    // SAMPLE THE FLESH LAYER (Diffuse/Subsurface)
-    
-    // the flesh layer spreads light widely, so standard cosine-weighted 
-    // hemisphere sampling is the mathematically correct choice here
     double base_pdf;
-    *wi = sampler.get_sample(&base_pdf);
-    
-    // the probability is scaled by the chance we picked the flesh layer
-    *pdf = (1.0 - thickness) * base_pdf;
+    base_layer->sample_f(wo, wi, &base_pdf);
+    if (base_pdf <= 0.0 || wi->z <= 0.0) {
+      *pdf = 0.0;
+      return Vector3D(0, 0, 0);
+    }
   }
 
-  // EVALUATE AND RETURN
-  
-  // using our direction (*wi), evaluate our fancy f() function 
-  // (which calculates BOTH layers) at this specific angle
-  Vector3D result = f(wo, *wi);
-  
-  // Return the BSDF value. The path integrator applies the 1 / pdf factor.
-  if (*pdf > 1e-10) {
-    result.x = min(result.x, 8.0);
-    result.y = min(result.y, 8.0);
-    result.z = min(result.z, 8.0);
-    
-    return result;
-  } else {
+  // --- Recompute the Full Mixture PDF ---
+  // Even if the sample came from only one branch, the same wi could have been
+  // produced by either lobe. The correct denominator for Monte Carlo transport
+  // is therefore
+  //   p(wi) = (1 - t) * p_base(wi) + t * p_gloss(wi)
+  // instead of only the selected branch pdf.
+  double base_pdf = cosine_hemisphere_pdf(*wi);
+  double gloss_pdf = disney_gloss_pdf(wo, *wi, roughness);
+  *pdf = base_weight * base_pdf + gloss_weight * gloss_pdf;
+
+  if (*pdf <= 1e-10) {
     return Vector3D(0, 0, 0);
   }
+
+  // Return the full two-lobe BSDF value. The path integrator handles the
+  // abs_cos_theta(wi) / pdf weighting, so sample_f should only ensure that
+  // wi, f(wo, wi), and pdf all refer to the same sampling model.
+  return f(wo, *wi);
 }
 
 void DisneyLayeredBSDF::render_debugger_node()
