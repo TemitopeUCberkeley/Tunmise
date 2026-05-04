@@ -157,6 +157,8 @@ target_include_directories(pt31 PUBLIC src)
 add_executable(pathtracer ${APPLICATION_3_2_SOURCE} ${APPLICATION_HEADERS})
 target_include_directories(pathtracer PUBLIC src)
 
+add_executable(generate_lip src/pathtracer/generate_lip.cpp)
+
 target_link_libraries(pt31 PUBLIC CGL)
 target_link_libraries(pathtracer PUBLIC pt31)
 
