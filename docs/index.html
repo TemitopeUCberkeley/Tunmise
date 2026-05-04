@@ -92,6 +92,15 @@
       margin: 18px 0 8px;
     }
 
+    .animation-figure {
+      margin-top: 20px;
+    }
+
+    .animation-figure img {
+      margin: 0 auto;
+      max-width: 700px;
+    }
+
     figure {
       margin: 0;
       border: 1px solid var(--line);
@@ -283,6 +292,15 @@
         thickness to <code>0.02</code>. This gave us a compact way to compare material response
         without manually editing the scene file before every render.
       </p>
+
+      <h3>Animated Gloss Preview</h3>
+      <p>
+        We also created a small animation tool in <code>scripts/generate_lip_animation.py</code>.
+        It takes the glossy render as input, isolates the lip region, and produces a looping GIF
+        that compresses and releases the lips to suggest a kissing motion. This is a lightweight
+        presentation asset rather than a full time-varying 3D simulation, but it makes the final
+        glossy material easier to view as an animated result.
+      </p>
     </section>
 
     <section>
@@ -350,6 +368,10 @@
           <figcaption>Matte lip: high roughness and almost no gloss layer.</figcaption>
         </figure>
       </div>
+      <figure class="animation-figure">
+        <img src="images/final_glossy_kiss.gif" alt="Animated glossy kissing lip GIF">
+        <figcaption>Animated glossy lip GIF generated from the final glossy render.</figcaption>
+      </figure>
     </section>
 
     <section>
